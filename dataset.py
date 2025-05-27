@@ -5,7 +5,8 @@ import torch
 from PIL import Image
 import collections.abc
 import albumentations as A
-
+from torch.utils.data import Sampler
+import random
 
 # --- InitialCustomImageDataset (초기 데이터 로드용) ---
 class InitialCustomImageDataset(Dataset):
@@ -90,3 +91,44 @@ class TestCustomImageDataset(Dataset):
             else:
                 image = self.transform(image)
         return image
+
+
+
+class GroupedBatchSampler(Sampler):
+    def __init__(self, label_to_indices, class_groups, batch_size, shuffle=True):
+        self.label_to_indices = label_to_indices
+        self.class_groups = class_groups
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+
+        self.group_batches = []
+        self._prepare_batches()
+
+    def _prepare_batches(self):
+        self.group_batches.clear()
+
+        for group_classes in self.class_groups.values():
+            group_indices = []
+            for cls in group_classes:
+                group_indices.extend(self.label_to_indices[cls])
+
+            if self.shuffle:
+                random.shuffle(group_indices)
+
+            # 배치 단위로 나누기
+            for i in range(0, len(group_indices), self.batch_size):
+                batch = group_indices[i:i+self.batch_size]
+                if len(batch) == self.batch_size:
+                    self.group_batches.append(batch)
+
+        if self.shuffle:
+            random.shuffle(self.group_batches)
+
+    def __iter__(self):
+        if self.shuffle:
+            self._prepare_batches()
+        for batch in self.group_batches:
+            yield batch
+
+    def __len__(self):
+        return len(self.group_batches)
