@@ -3,6 +3,7 @@ import sys
 import random
 import numpy as np
 import torch
+import importlib
 
 class Logger:
     def __init__(self, filepath):
@@ -16,6 +17,15 @@ class Logger:
     def flush(self):
         self.terminal.flush()
         self.log.flush()
+
+# 편한 로깅을 위해 만든 함수. 문자열로 모듈을 불러옴
+def get_class_from_string(full_class_string):
+    try:
+        module_path, class_name = full_class_string.rsplit('.', 1)
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name)
+    except (ImportError, AttributeError) as e:
+        raise ImportError(f"Cannot import {full_class_string}: {e}")
 
 # Fixed RandomSeed
 def seed_everything(seed):

@@ -31,26 +31,46 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Hyperparameter Setting
 CFG = {
     "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/train',
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/cutout_mosaic_mixup_cutmix_random_test',
+    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/logging_test',
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": True,
-    "MIXUP": True,
+    "MIXUP":  True,
     "MOSAIC": True,
     "CUTOUT": False,
     #################
 
-    'IMG_SIZE': 512,
+    'IMG_SIZE': 448,
     'BATCH_SIZE': 32, # 학습 시 배치 크기
     'EPOCHS': 25,
-    'LEARNING_RATE': 1e-4,
     'SEED' : 42,
-    'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
+    'MODEL_NAME': 'eva02_large_patch14_448.mim_m38m_ft_in1k', # 사용할 모델 이름
     'N_FOLDS': 5,
-    'EARLY_STOPPING_PATIENCE': 5,
+    'EARLY_STOPPING_PATIENCE': 3,
     'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
-    'TARGET_FOLD': 1          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
+    'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
+    
+    # 새롭게 추가된 logging파트.
+    'LOSS': {
+        'class': 'torch.nn.CrossEntropyLoss',
+        'params': {}   
+    },
+    'OPTIMIZER': {
+        'class': 'torch.optim.AdamW',
+        'params': {
+            'lr': 1e-4,
+            'weight_decay': 1e-2
+        }
+    },
+    'SCHEDULER': {
+        'class': 'torch.optim.lr_scheduler.ReduceLROnPlateau',
+        'params': {
+            'mode': 'min',
+            'factor': 0.1,
+            'patience':2
+        }
+    },
 }
 
 
@@ -100,6 +120,13 @@ def train_main():
     # hyperparameter 저장
     with open(os.path.join(work_dir, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(CFG, f, indent=4, ensure_ascii=False)
+    
+    # transform setting 저장
+    with open(os.path.join(work_dir, "train_transform.json"), 'w') as f:
+        json.dump(train_transform.to_dict(), f, indent=4)
+    with open(os.path.join(work_dir, "val_transform.json"), 'w') as f:
+        json.dump(val_transform.to_dict(), f, indent=4)
+    
     
     print("Using device:", device)
     print(f"Using model: {CFG['MODEL_NAME']}")
@@ -183,9 +210,9 @@ def train_main():
         else:
             print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
         
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.AdamW(model.parameters(), lr=CFG['LEARNING_RATE'], weight_decay=1e-2)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=2, verbose=False)
+        criterion = get_class_from_string(CFG['LOSS']['class'])(**CFG['LOSS']['params'])
+        optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
+        scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
 
         best_logloss_fold = float('inf')
         current_fold_best_model_path = None
