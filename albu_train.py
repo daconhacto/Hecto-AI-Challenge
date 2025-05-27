@@ -45,13 +45,13 @@ CFG = {
     'BATCH_SIZE': 32, # 학습 시 배치 크기
     'EPOCHS': 25,
     'SEED' : 42,
-    'MODEL_NAME': 'eva02_large_patch14_448.mim_m38m_ft_in1k', # 사용할 모델 이름
+    'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
     'N_FOLDS': 5,
     'EARLY_STOPPING_PATIENCE': 3,
     'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
     
-    # 새롭게 추가된 logging파트.
+    # 새롭게 추가된 logging파트. class의 경우 무조건 풀경로로 적어야합니다. nn.CrossEntropyLoss 처럼 적으면 오류남
     'LOSS': {
         'class': 'torch.nn.CrossEntropyLoss',
         'params': {}   
@@ -122,10 +122,8 @@ def train_main():
         json.dump(CFG, f, indent=4, ensure_ascii=False)
     
     # transform setting 저장
-    with open(os.path.join(work_dir, "train_transform.json"), 'w') as f:
-        json.dump(train_transform.to_dict(), f, indent=4)
-    with open(os.path.join(work_dir, "val_transform.json"), 'w') as f:
-        json.dump(val_transform.to_dict(), f, indent=4)
+    save_transform(train_transform, os.path.join(work_dir, "train_transform.json"))
+    save_transform(val_transform, os.path.join(work_dir, "val_transform.json"))
     
     
     print("Using device:", device)

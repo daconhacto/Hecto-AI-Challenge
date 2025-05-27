@@ -4,6 +4,9 @@ import random
 import numpy as np
 import torch
 import importlib
+import json
+import albumentations as A
+import torchvision.transforms as T
 
 class Logger:
     def __init__(self, filepath):
@@ -17,6 +20,49 @@ class Logger:
     def flush(self):
         self.terminal.flush()
         self.log.flush()
+
+# torch vision transform의 경우 저장을 위해 dictionary화 하는 로직이 따로 필요함
+def serialize_torchvision_transform(transform):
+    result = []
+    for t in transform.transforms:
+        t_dict = {
+            "name": t.__class__.__name__,
+            "params": {}
+        }
+        try:
+            # Extract user-defined params only
+            for k, v in vars(t).items():
+                # Optionally filter non-serializable types
+                try:
+                    json.dumps(v)  # test if serializable
+                    t_dict["params"][k] = v
+                except TypeError:
+                    t_dict["params"][k] = str(v)
+        except Exception:
+            t_dict["params"] = "Could not extract parameters"
+
+        result.append(t_dict)
+    return result
+
+# transform 저장을 위해 추가
+def save_transform(transform, save_path):
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    if isinstance(transform, A.Compose):
+        transform_dict = {
+            "type": "albumentations",
+            "transform": transform.to_dict()
+        }
+    elif isinstance(transform, T.Compose):
+        transform_dict = {
+            "type": "torchvision",
+            "transform": serialize_torchvision_transform(transform)
+        }
+    else:
+        raise ValueError(f"Unsupported transform type: {type(transform)}")
+
+    with open(save_path, 'w') as f:
+        json.dump(transform_dict, f, indent=4)
 
 # 편한 로깅을 위해 만든 함수. 문자열로 모듈을 불러옴
 def get_class_from_string(full_class_string):
