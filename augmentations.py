@@ -171,3 +171,193 @@ class SaliencyMix:
             new_labels[i] = labels[i] * lam_i + shuffled_labels[i] * (1 - lam_i)
 
         return new_images, new_labels
+    
+def half_mosaic(images, labels, class_names, similarity_map, num_classes, orientation='horizontal'):
+
+    """
+    배치 내 유사 클래스끼리 이미지를 절반씩 붙이고, 레이블도 0.5씩 혼합하여 증강.
+    orientation: 'horizontal' 또는 'vertical'
+    """
+    B, C, H, W = images.shape
+    device = images.device
+
+    # 레이블이 원-핫 인코딩 되어있지 않다면 변환 (CrossEntropyLoss는 정수 레이블도 받으므로,
+    # 이 함수를 호출하기 전에 또는 이 함수 내에서 일관되게 처리 필요)
+    # mosaic_augmentation과 일관성을 위해 여기서 처리:
+    if labels.ndim != 2 or labels.shape[1] != num_classes:
+        original_int_labels = labels.clone() # class_names 조회용 원본 정수 레이블
+        labels_one_hot = F.one_hot(labels, num_classes=num_classes).float().to(device)
+    else: # 이미 원-핫 인코딩된 float 레이블로 가정
+        original_int_labels = torch.argmax(labels, dim=1) # class_names 조회용 정수 레이블 복원
+        labels_one_hot = labels
+
+    out_images = images.clone()
+    # 초기 레이블은 원본 이미지의 원-핫 레이블로 설정 (혼합 대상이 없을 경우 대비)
+    out_labels = labels_one_hot.clone()
+
+    for i in range(B):
+        # class_names, similarity_map 조회 시에는 정수 레이블 사용
+        cls_i_name = class_names[original_int_labels[i].item()]
+        candidates = similarity_map.get(cls_i_name, [])
+        
+        # 현재 배치 내에서 혼합할 다른 이미지 인덱스 찾기 (자기 자신 제외)
+        candidate_indices_in_batch = [
+            j_idx for j_idx in range(B)
+            if i != j_idx and class_names[original_int_labels[j_idx].item()] in candidates
+        ]
+        
+        if not candidate_indices_in_batch:
+            # 혼합할 대상 이미지가 없으면 원본 이미지와 원본 레이블(원-핫) 사용
+            continue # out_images[i]는 이미 원본, out_labels[i]도 이미 원본 레이블
+
+        # 혼합할 이미지 j 랜덤 선택
+        j = random.choice(candidate_indices_in_batch)
+        
+        img1, label1_one_hot = images[i], labels_one_hot[i]
+        img2, label2_one_hot = images[j], labels_one_hot[j]
+        
+        # 이미지 절반씩 조합
+        if orientation == 'vertical':
+            top_half = img1[:, :H//2, :]
+            bottom_half = img2[:, H//2:, :]
+            out_images[i] = torch.cat([top_half, bottom_half], dim=1)
+        else:  # horizontal
+            left_half = img1[:, :, :W//2]
+            right_half = img2[:, :, W//2:]
+            out_images[i] = torch.cat([left_half, right_half], dim=2)
+            
+        # 레이블 0.5씩 혼합 (soft label 생성)
+        out_labels[i] = 0.5 * label1_one_hot + 0.5 * label2_one_hot
+        
+    return out_images, out_labels
+
+def mosaic_augmentation(images, labels, num_classes, grid_size=2):
+    """
+    배치 내의 이미지들을 사용하여 Mosaic 증강을 수행합니다.
+    
+    Args:
+        images (torch.Tensor): 배치 이미지 텐서 [B, C, H, W]
+        labels (torch.Tensor): 배치 레이블 텐서 [B, num_classes] - one-hot 인코딩 가정
+        grid_size (int): Mosaic 그리드 크기 (기본값: 2x2 그리드)
+    
+    Returns:
+        tuple: (mosaic_images, mosaic_labels) - 증강된 이미지와 레이블
+    """
+    batch_size, channels, height, width = images.shape
+    device = images.device
+    
+    if labels.ndim != 2:
+        labels = F.one_hot(labels, num_classes=num_classes).float().to(labels.device)
+    
+    # 원본 배치 크기 유지
+    mosaic_images = torch.zeros_like(images)
+    mosaic_labels = torch.zeros_like(labels)
+    
+    for b_idx in range(batch_size):
+        # 각 이미지마다 Mosaic 적용
+        new_image = torch.zeros((channels, height, width), device=device)
+        new_label = torch.zeros_like(labels[b_idx])
+        
+        # grid_size x grid_size 그리드 생성
+        cell_h, cell_w = height // grid_size, width // grid_size
+        
+        # 사용할 이미지 인덱스 선택 (현재 이미지 포함하여 무작위로)
+        image_indices = [b_idx] + random.choices(list(range(batch_size)), k=(grid_size*grid_size)-1)
+        random.shuffle(image_indices)
+        
+        # 가중치를 저장할 변수 (레이블 혼합에 사용)
+        weights = []
+        total_area = height * width
+        
+        # 그리드 채우기
+        idx = 0
+        for i in range(grid_size):
+            for j in range(grid_size):
+                src_idx = image_indices[idx]
+                src_img = images[src_idx]
+                
+                # 셀 영역 계산
+                y1, y2 = i * cell_h, (i + 1) * cell_h
+                x1, x2 = j * cell_w, (j + 1) * cell_w
+                
+                # 약간의 변동성을 위한 무작위 오프셋 (선택 사항)
+                if i > 0 and j > 0 and i < grid_size-1 and j < grid_size-1:
+                    y1 = min(height-1, max(0, y1 + random.randint(-cell_h//4, cell_h//4)))
+                    y2 = min(height, max(y1+1, y2 + random.randint(-cell_h//4, cell_h//4)))
+                    x1 = min(width-1, max(0, x1 + random.randint(-cell_w//4, cell_w//4)))
+                    x2 = min(width, max(x1+1, x2 + random.randint(-cell_w//4, cell_w//4)))
+                
+                # 해당 셀에 이미지 할당
+                cell_area = (y2 - y1) * (x2 - x1)
+                new_image[:, y1:y2, x1:x2] = src_img[:, y1:y2, x1:x2]
+                
+                # 면적 가중치 계산
+                weight = cell_area / total_area
+                weights.append((src_idx, weight))
+                
+                idx += 1
+        
+        # 레이블 혼합
+        for src_idx, weight in weights:
+            new_label += labels[src_idx] * weight
+        
+        # 결과 저장
+        mosaic_images[b_idx] = new_image
+        mosaic_labels[b_idx] = new_label
+    
+    return mosaic_images, mosaic_labels
+
+
+def random_half_mosaic(
+    images: torch.Tensor,
+    labels: torch.Tensor,
+    num_classes: int,
+    orientation: str = 'horizontal'
+):
+    """
+    배치 내 임의의 다른 이미지와 절반씩 붙이는 Half-Mosaic.
+    class 제약 없이 완전 랜덤 혼합.
+    
+    Args:
+        images: [B, C, H, W]
+        labels: [B] 또는 [B, num_classes]
+        num_classes: 클래스 수
+        orientation: 'horizontal' or 'vertical'
+    Returns:
+        mixed_images: [B, C, H, W]
+        mixed_labels: [B, num_classes] (soft label)
+    """
+    B, C, H, W = images.shape
+    device = images.device
+
+    # labels → one-hot float32 로 변환
+    if labels.dim() == 1:
+        labels_onehot = F.one_hot(labels, num_classes=num_classes).float().to(device)
+    else:
+        labels_onehot = labels.float().to(device)
+
+    out_images = images.clone()
+    out_labels = labels_onehot.clone()
+
+    for i in range(B):
+        # 자기 자신 제외한 랜덤 인덱스 선택
+        j = random.choice([k for k in range(B) if k != i])
+
+        img1 = images[i]
+        img2 = images[j]
+        lab1 = labels_onehot[i]
+        lab2 = labels_onehot[j]
+
+        if orientation == 'vertical':
+            top = img1[:, :H//2, :]
+            bot = img2[:, H//2:, :]
+            out_images[i] = torch.cat([top, bot], dim=1)
+        else:  # horizontal
+            left = img1[:, :, :W//2]
+            right = img2[:, :, W//2:]
+            out_images[i] = torch.cat([left, right], dim=2)
+
+        # 레이블은 50:50 섞기
+        out_labels[i] = 0.5 * lab1 + 0.5 * lab2
+
+    return out_images, out_labels
