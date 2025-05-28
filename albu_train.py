@@ -224,7 +224,11 @@ def train_main():
             for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
                 images, labels = images.to(device), labels.to(device)
 
-                choice = random.choice(selected_augmentations)
+                if selected_augmentations:
+                    choice = random.choice(selected_augmentations)
+                else:
+                    choice = None
+                    
                 # cutout을 위해 추가
                 if CFG['CUTOUT'] and choice == 'CUTOUT':
                     images = apply_cutout(images, mask_size = 64)
