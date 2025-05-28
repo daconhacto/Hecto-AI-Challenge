@@ -33,6 +33,9 @@ CFG = {
     "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/train',
     "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/logging_test',
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
+    
+    # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
+    "WRONG_THRESHOLD": 0.7,
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": True,
@@ -270,7 +273,8 @@ def train_main():
                     all_labels_epoch.extend(labels.cpu().numpy())
                     
                     # === 틀린 예측 탐색 ===
-                    wrong_indices = (preds != labels).nonzero(as_tuple=True)[0]  # 틀린 인덱스만 추출
+                    correct_class_confidences = probs[torch.arange(len(labels)), labels]
+                    wrong_indices = (correct_class_confidences <= CFG['WRONG_THRESHOLD']).nonzero(as_tuple=True)[0]  # 틀린 인덱스만 추출
                     for idx in wrong_indices:
                         path = img_paths[idx]  # 예: 'data/train/cat/image1.jpg'
                         parent_folder = os.path.basename(os.path.dirname(path))  # 예: 'cat'
@@ -285,12 +289,12 @@ def train_main():
             val_accuracy_epoch = 100 * correct_epoch / total_epoch if total_epoch > 0 else 0
             val_logloss_epoch = log_loss(all_labels_epoch, all_probs_epoch, labels=list(range(num_classes))) if total_epoch > 0 and len(np.unique(all_labels_epoch)) > 1 else float('inf')
 
-            current_lr = optimizer.param_groups[0]['lr']
-            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
             if CFG['SCHEDULER']['class'] == 'torch.optim.lr_scheduler.ReduceLROnPlateau':
                 scheduler.step(val_logloss_epoch)
             else:
                 scheduler.step(epoch)
+            current_lr = optimizer.param_groups[0]['lr']
+            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
 
             if val_logloss_epoch < best_logloss_fold:
                 best_logloss_fold = val_logloss_epoch

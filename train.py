@@ -225,7 +225,7 @@ def train_main():
                     choice = random.choice(selected_augmentations)
                 else:
                     choice = None
-                
+                    
                 # cutout을 위해 추가
                 if CFG['CUTOUT'] and choice == 'CUTOUT':
                     images = apply_cutout(images, mask_size = 64)
@@ -267,7 +267,8 @@ def train_main():
                     all_labels_epoch.extend(labels.cpu().numpy())
                     
                     # === 틀린 예측 탐색 ===
-                    wrong_indices = (preds != labels).nonzero(as_tuple=True)[0]  # 틀린 인덱스만 추출
+                    correct_class_confidences = probs[torch.arange(len(labels)), labels]
+                    wrong_indices = (correct_class_confidences <= CFG['WRONG_THRESHOLD']).nonzero(as_tuple=True)[0]  # 틀린 인덱스만 추출
                     for idx in wrong_indices:
                         path = img_paths[idx]  # 예: 'data/train/cat/image1.jpg'
                         parent_folder = os.path.basename(os.path.dirname(path))  # 예: 'cat'
@@ -282,12 +283,12 @@ def train_main():
             val_accuracy_epoch = 100 * correct_epoch / total_epoch if total_epoch > 0 else 0
             val_logloss_epoch = log_loss(all_labels_epoch, all_probs_epoch, labels=list(range(num_classes))) if total_epoch > 0 and len(np.unique(all_labels_epoch)) > 1 else float('inf')
 
-            current_lr = optimizer.param_groups[0]['lr']
-            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
             if CFG['SCHEDULER']['class'] == 'torch.optim.lr_scheduler.ReduceLROnPlateau':
                 scheduler.step(val_logloss_epoch)
             else:
                 scheduler.step(epoch)
+            current_lr = optimizer.param_groups[0]['lr']
+            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
 
             if val_logloss_epoch < best_logloss_fold:
                 best_logloss_fold = val_logloss_epoch
