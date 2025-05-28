@@ -11,7 +11,8 @@ import torch.nn.functional as F
 # train.py에서 필요한 클래스와 함수, CFG를 가져옴
 from utils import *
 from dataset import TestCustomImageDataset
-from albu_train import CustomTimmModel, CFG as TRAIN_CFG, val_transform as test_transform
+from albu_train import CustomTimmModel
+from albumentations.pytorch import ToTensorV2
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -33,6 +34,13 @@ def inference_main():
     # 제외한 데이터만 업데이트
     filtered_data = {k: v for k, v in TRAIN_CFG.items() if k not in CFG_INF.keys()}
     CFG_INF.update(filtered_data)
+    
+    # transform 정의
+    test_transform = A.Compose([
+        A.Resize(CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE']),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
 
 
     print("Using device:", device)
