@@ -8,10 +8,10 @@ import json # class_names 로드를 위해 추가
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
-import torch.nn.functional as F
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 # train.py에서 필요한 클래스와 함수, CFG를 가져옴
-from albu_train import CustomTimmModel, val_transform
+from albu_train import CustomTimmModel
 from dataset import InitialCustomImageDataset, FoldSpecificDataset
 from utils import *
 
@@ -40,6 +40,13 @@ def validate_for_all_train_data():
     CFG.update(filtered_data)
     print(f"Inference CFG: {CFG}")
     seed_everything(CFG['SEED'])
+    
+    # transform 정의
+    val_transform = A.Compose([
+        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
 
     # class_names 로드
     try:
