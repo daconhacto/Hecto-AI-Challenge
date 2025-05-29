@@ -365,9 +365,6 @@ def random_half_mosaic(
 
 
 def half_crop(image, mode=None):
-    if not mode:
-        mode = random.choice(['top', 'bottom', 'left', 'right'])
-
     H, W, _ = image.shape
     if mode == 'top':
         return image[:H//2, :, :]
@@ -379,3 +376,11 @@ def half_crop(image, mode=None):
         return image[:, W//2:, :]
     else:
         return image  # no crop
+
+class CustomCropTransform:
+    def __init__(self, mode=None):
+        self.mode = mode
+
+    def __call__(self, image, **kwargs):
+        mode = self.mode if self.mode else random.choice(['top', 'bottom', 'left', 'right'])
+        return half_crop(image, mode)
