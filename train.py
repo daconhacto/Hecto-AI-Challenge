@@ -286,7 +286,7 @@ def train_main():
             if CFG['SCHEDULER']['class'] == 'torch.optim.lr_scheduler.ReduceLROnPlateau':
                 scheduler.step(val_logloss_epoch)
             else:
-                scheduler.step(epoch)
+                scheduler.step()
             current_lr = optimizer.param_groups[0]['lr']
             print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
 

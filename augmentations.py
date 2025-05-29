@@ -361,3 +361,21 @@ def random_half_mosaic(
         out_labels[i] = 0.5 * lab1 + 0.5 * lab2
 
     return out_images, out_labels
+
+
+
+def half_crop(image, mode=None):
+    if not mode:
+        mode = random.choice(['top', 'bottom', 'left', 'right'])
+
+    H, W, _ = image.shape
+    if mode == 'top':
+        return image[:H//2, :, :]
+    elif mode == 'bottom':
+        return image[H//2:, :, :]
+    elif mode == 'left':
+        return image[:, :W//2, :]
+    elif mode == 'right':
+        return image[:, W//2:, :]
+    else:
+        return image  # no crop
