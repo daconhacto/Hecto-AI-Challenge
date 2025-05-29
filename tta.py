@@ -1,5 +1,3 @@
-# 현재 모듈화 하고 나서 수정 안해서 아마 제대로 작동 안할듯
-
 import os
 import pandas as pd
 import numpy as np
@@ -13,78 +11,45 @@ import torch.nn.functional as F
 # train.py에서 필요한 클래스와 함수, CFG를 가져옴
 from albu_train import CustomTimmModel, CFG as TRAIN_CFG
 from utils import *
+from dataset import *
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Inference Configuration
 CFG_INF = {
-    'MODEL_PATH': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/checkpoint/0519/best_model_convnext_base(1214).pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
-    'ROOT': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/test',
-    'SUBMISSION_FILE': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/sample_submission.csv',
+    "WORK_DIR": '/home/sh/hecto/tjrgus5/work_dir/convnext_random_resize_crop+mosaic_or_mixupcutmix', # train.py로 생성된 work_directory
+    'MODEL_PATH': '/home/sh/hecto/tjrgus5/work_dir/convnext_random_resize_crop+mosaic_or_mixupcutmix/best_model_convnext_base.fb_in22k_ft_in1k_384_fold1.pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
+    'ROOT': '/home/sh/hecto/test',
+    'SUBMISSION_FILE': '/home/sh/hecto/sample_submission.csv',
     'BATCH_SIZE': 64, # 추론 시 배치 크기
     'TTA_TIMES': 4, # tta 수행 횟수
-    # MODEL_NAME, IMG_SIZE 등은 TRAIN_CFG에서 가져와 사용
-    'MODEL_NAME': TRAIN_CFG['MODEL_NAME'],
-    'IMG_SIZE': TRAIN_CFG['IMG_SIZE'],
-    'SEED': TRAIN_CFG['SEED'] # 일관성을 위해 시드 설정
 }
-
-# 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
-tta_transform = transforms.Compose([
-    transforms.Resize((CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(15),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
-
-class TTATestCustomImageDataset(Dataset):
-    def __init__(self, root_dir, transform, tta_times=4):
-        """
-        Args:
-            root_dir (str): 테스트 이미지가 있는 폴더 경로
-            transform (Transform): 단일 transform (e.g. train_transform)
-            tta_times (int): 동일 이미지에 몇 번 transform을 적용할지
-        """
-        self.root_dir = root_dir
-        self.transform = transform
-        self.tta_times = tta_times
-        self.samples = []
-
-        if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
-            print(f"Warning: Test directory {root_dir} not found or is not a directory.")
-            return
-        
-        for fname in sorted(os.listdir(root_dir)):
-            if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img_path = os.path.join(root_dir, fname)
-                self.samples.append((img_path,))
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        img_path = self.samples[idx][0]
-        try:
-            image = Image.open(img_path).convert('RGB')
-        except FileNotFoundError:
-            return [torch.zeros((3, CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])) for _ in range(self.tta_times)]
-
-        images = [self.transform(image) for _ in range(self.tta_times)]
-        return images  # (tta_times, C, H, W)
 
 
 def inference_main():
+    # TRAIN_CFG를 통한 CFG_INF 업데이트
+    work_dir = CFG_INF['WORK_DIR']
+    with open(os.path.join(work_dir, "settings.json"), "r") as f:
+        TRAIN_CFG = json.load(f)
+    # 제외한 데이터만 업데이트
+    filtered_data = {k: v for k, v in TRAIN_CFG.items() if k not in CFG_INF.keys()}
+    CFG_INF.update(filtered_data)
+
+    # 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
+    tta_transform = transforms.Compose([
+        transforms.RandomResizedCrop(size=CFG_INF['IMG_SIZE'], scale=(0.25, 1.0), ratio=(2/3, 5/3), interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
     print("Using device:", device)
     print(f"Inference CFG: {CFG_INF}")
     seed_everything(CFG_INF['SEED'])
 
     # class_names 로드
     try:
-        with open('class_names.json', 'r') as f:
+        with open(os.path.join(work_dir, 'class_names.json'), 'r') as f:
             class_names = json.load(f)
     except FileNotFoundError:
         print("Error: class_names.json not found. Please run train.py first to generate it.")
@@ -95,7 +60,7 @@ def inference_main():
 
     # 테스트 데이터셋 및 DataLoader
     test_root = CFG_INF['ROOT'] # 테스트 데이터 경로
-    test_dataset = TTATestCustomImageDataset(test_root, transform=tta_transform, tta_times=CFG_INF['TTA_TIMES']) # train.py의 val_transform과 동일한 것을 사용
+    test_dataset = TTATestCustomImageDataset(test_root, transform=tta_transform, tta_times=CFG_INF['TTA_TIMES'])
     
     if not test_dataset.samples:
         print(f"No images found in {test_root} for inference. Skipping submission file generation.")

@@ -132,3 +132,44 @@ class GroupedBatchSampler(Sampler):
 
     def __len__(self):
         return len(self.group_batches)
+
+
+class TTATestCustomImageDataset(Dataset):
+    def __init__(self, root_dir, transform, tta_times=4):
+        """
+        Args:
+            root_dir (str): 테스트 이미지가 있는 폴더 경로
+            transform (Transform): 단일 transform (e.g. train_transform)
+            tta_times (int): 동일 이미지에 몇 번 transform을 적용할지
+        """
+        self.root_dir = root_dir
+        self.transform = transform
+        self.tta_times = tta_times
+        self.samples = []
+        self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
+
+        if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
+            print(f"Warning: Test directory {root_dir} not found or is not a directory.")
+            return
+        
+        for fname in sorted(os.listdir(root_dir)):
+            if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+                img_path = os.path.join(root_dir, fname)
+                self.samples.append((img_path,))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path = self.samples[idx][0]
+        try:
+            image = Image.open(img_path).convert('RGB')
+        except FileNotFoundError:
+            return [torch.zeros((3, CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])) for _ in range(self.tta_times)]
+
+        # transform이 Albumentations인지 torchvision인지 구분
+        if self.is_albu_transform:
+            images = [self.transform(image=np.array(image))['image'] for _ in range(self.tta_times)]
+        else:
+            images = [self.transform(image) for _ in range(self.tta_times)]
+        return images  # (tta_times, C, H, W)
