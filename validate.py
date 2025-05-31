@@ -14,16 +14,18 @@ from albumentations.pytorch import ToTensorV2
 from albu_train import CustomTimmModel
 from dataset import InitialCustomImageDataset, FoldSpecificDataset
 from utils import *
+from sklearn.metrics import log_loss
+import torch.nn.functional as F
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/convnext_cutmix+mixup_test', # train.py로 생성된 work_directory
-    "MODEL_PATH": None, # 사용할 모델 경로. None이면 WORK_DIR에서 임의로 .pth파일을 찾아서 고름
-    "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/train', # data_path
-    "BATCH_SIZE": 32
+    "WORK_DIR": '/home/sh/hecto/tjrgus5/work_dir/convnext1214_half_image_retraining', # train.py로 생성된 work_directory
+    'MODEL_PATH': '/home/sh/hecto/tjrgus5/work_dir/convnext1214_half_image_retraining/best_model_convnext_base.fb_in22k_ft_in1k_384_fold1.pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
+    "ROOT": '/home/sh/hecto/train', # data_path
+    "BATCH_SIZE": 64
 }
 
 def validate_for_all_train_data():
@@ -93,14 +95,36 @@ def validate_for_all_train_data():
 
     model.eval()
     num_corrects = 0
+    total_loss = 0.0
+    total_samples = 0
+    all_probs_epoch = []
+    all_labels_epoch = []
     wrong_img_dict = defaultdict(list)
+
     with torch.no_grad():
-        for images, labels, img_paths in tqdm(val_loader, desc="Inference"):
+        pbar = tqdm(val_loader, desc="Inference")
+        for images, labels, img_paths in pbar:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
             loss = criterion(outputs, labels)
+
+            batch_size = labels.size(0)
+            total_loss += loss.item() * batch_size
+            total_samples += batch_size
+
             _, preds = torch.max(outputs, 1)
             num_corrects += (preds == labels).sum().item()
+            probs = F.softmax(outputs, dim=1)
+            all_probs_epoch.extend(probs.cpu().numpy())
+            all_labels_epoch.extend(labels.cpu().numpy())
+
+            avg_loss = total_loss / total_samples
+            avg_acc = num_corrects / total_samples * 100
+
+            pbar.set_postfix({
+                "Avg Loss": f"{avg_loss:.4f}",
+                "Avg Acc": f"{avg_acc:.2f}%"
+            })
             # === 틀린 예측 탐색 ===
             wrong_indices = (preds != labels).nonzero(as_tuple=True)[0]  # 틀린 인덱스만 추출
             for idx in wrong_indices:
@@ -110,6 +134,10 @@ def validate_for_all_train_data():
                     'image_path': path,
                     'model_answer': class_names[preds[idx]]
                 })
+    print(f"Loss : {(total_loss / total_samples):.4f}")
+    print(f"accuracy : {(num_corrects / total_samples * 100):.4f}")
+    print(f"log loss : {log_loss(all_labels_epoch, all_probs_epoch, labels=list(range(num_classes))):.4f}")
+
     with open(os.path.join(work_dir, "all_wrong_examples.json"), "w", encoding="utf-8") as f:
         json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
     
