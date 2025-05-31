@@ -7,3 +7,4 @@ scikit-image
 streamlit
 albumentations
 pytorch-metric-learning
+opencv-contrib-python

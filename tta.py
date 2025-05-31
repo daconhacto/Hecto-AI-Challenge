@@ -60,7 +60,7 @@ def inference_main():
 
     # 테스트 데이터셋 및 DataLoader
     test_root = CFG_INF['ROOT'] # 테스트 데이터 경로
-    test_dataset = TTATestCustomImageDataset(test_root, transform=tta_transform, tta_times=CFG_INF['TTA_TIMES'])
+    test_dataset = TTATestCustomImageDataset(test_root, transform=tta_transform, img_size=CFG_INF['IMG_SIZE'], tta_times=CFG_INF['TTA_TIMES'])
     
     if not test_dataset.samples:
         print(f"No images found in {test_root} for inference. Skipping submission file generation.")

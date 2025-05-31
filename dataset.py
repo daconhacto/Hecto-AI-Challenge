@@ -135,7 +135,7 @@ class GroupedBatchSampler(Sampler):
 
 
 class TTATestCustomImageDataset(Dataset):
-    def __init__(self, root_dir, transform, tta_times=4):
+    def __init__(self, root_dir, transform, img_size, tta_times=4):
         """
         Args:
             root_dir (str): 테스트 이미지가 있는 폴더 경로
@@ -145,6 +145,7 @@ class TTATestCustomImageDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.tta_times = tta_times
+        self.img_size = img_size
         self.samples = []
         self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
 
@@ -165,7 +166,7 @@ class TTATestCustomImageDataset(Dataset):
         try:
             image = Image.open(img_path).convert('RGB')
         except FileNotFoundError:
-            return [torch.zeros((3, CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])) for _ in range(self.tta_times)]
+            return [torch.zeros((3, self.img_size, self.img_size)) for _ in range(self.tta_times)]
 
         # transform이 Albumentations인지 torchvision인지 구분
         if self.is_albu_transform:
