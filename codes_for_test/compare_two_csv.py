@@ -1,8 +1,9 @@
 import pandas as pd
+import numpy as np
 
 
-p1 = "/project/ahnailab/jys0207/CP/tjrgus5/hecto/submission_convnext_base.fb_in22k_ft_in1k_384_tta.csv"
-p2 = "/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/emsemble.csv"
+p1 = "/project/ahnailab/jys0207/CP/tjrgus5/hecto/submissions/weight_emsemble_0.09896.csv"
+p2 = "/project/ahnailab/jys0207/CP/tjrgus5/hecto/submissions/eva_mosaic_cutmix_mixup_retrain.csv"
 
 def compute_max_feature_match_rate(csv1_path, csv2_path):
     df1 = pd.read_csv(csv1_path)
@@ -19,6 +20,8 @@ def compute_max_feature_match_rate(csv1_path, csv2_path):
     feat1 = df1[feature_cols].values
     feat2 = df2[feature_cols].values
 
+    mae = np.sum(np.abs(feat1 - feat2))
+
     # 각 row마다 가장 큰 feature 인덱스 추출
     max_idx_1 = feat1.argmax(axis=1)
     max_idx_2 = feat2.argmax(axis=1)
@@ -30,6 +33,7 @@ def compute_max_feature_match_rate(csv1_path, csv2_path):
     print(f"✅ 총 샘플 수: {len(match)}")
     print(f"🎯 최댓값 feature 일치 개수: {match.sum()}")
     print(f"📊 최댓값 feature 일치율: {match_rate:.4f}")
+    print(f"mae : {mae:.4f}")
 
     return match_rate
 

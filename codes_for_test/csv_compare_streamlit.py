@@ -7,11 +7,11 @@ import glob
 
 # --- 사용자 입력 ---
 root = '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/test'
-csv_files = ['/project/ahnailab/jys0207/CP/tjrgus5/hecto/submissions/weight_emsemble_0.09896.csv',
-             '/project/ahnailab/jys0207/CP/tjrgus5/hecto/submissions/submission_eva02_large_patch14_448.mim_m38m_ft_in1k_fold1_mixup_mosaic_cutmix.csv']
+csv_files = ['/project/ahnailab/jys0207/CP/tjrgus5/hecto/submissions/convnext1214_retrain_with_half_0.0433_retry.csv',
+             '/project/ahnailab/jys0207/CP/tjrgus5/hecto/submissions/1214.csv']
 csv_file_names = [
-    'best_ensemble',
-    'eva_0.1258'
+    'finetune',
+    'original'
 ]
 image_ext = '.jpg'
 
@@ -47,6 +47,7 @@ if "disagree_ids" not in st.session_state:
 
 # 이후에는 session_state에서 바로 사용
 disagree_ids = st.session_state.disagree_ids
+print(len(disagree_ids))
 
 # --- session_state 사용한 탐색 기능 ---
 if 'id_index' not in st.session_state:
