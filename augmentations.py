@@ -5,83 +5,93 @@ import torch
 import torch.nn.functional as F
 
 
+def saliency_bbox(img, lam):
+    size = img.size()
+    W = size[1]
+    H = size[2]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = np.int32(W * cut_rat)
+    cut_h = np.int32(H * cut_rat)
+
+    # initialize OpenCV's static fine grained saliency detector and compute the saliency map
+    temp_img = img.cpu().numpy().transpose(1, 2, 0)
+    saliency = cv2.saliency.StaticSaliencyFineGrained_create()
+    (success, saliencyMap) = saliency.computeSaliency(temp_img)
+    saliencyMap = (saliencyMap * 255).astype("uint8")
+
+    maximum_indices = np.unravel_index(np.argmax(saliencyMap, axis=None), saliencyMap.shape)
+    x = maximum_indices[0]
+    y = maximum_indices[1]
+
+    bbx1 = np.clip(x - cut_w // 2, 0, W)
+    bby1 = np.clip(y - cut_h // 2, 0, H)
+    bbx2 = np.clip(x + cut_w // 2, 0, W)
+    bby2 = np.clip(y + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
+
 # 확률적으로 Mosaic 적용을 위한 함수
-def apply_mosaic(images, labels, num_classes, p=0.5, grid_size=2):
-    """
-    주어진 확률로 배치에 Mosaic 증강을 적용합니다.
-    
-    Args:
-        images (torch.Tensor): 배치 이미지 텐서
-        labels (torch.Tensor): 배치 레이블 텐서
-        p (float): Mosaic을 적용할 확률 (0.0 ~ 1.0)
-        
-    Returns:
-        tuple: (images, labels) - 원본 또는 증강된 이미지와 레이블
-    """
+def apply_mosaic(images, labels, num_classes, p=0.5, grid_size=2, use_saliency=True):
     if random.random() < p:
         batch_size, channels, height, width = images.shape
         device = images.device
-        
+
         if labels.ndim != 2:
             labels = F.one_hot(labels, num_classes=num_classes).float().to(labels.device)
-        
-        # 원본 배치 크기 유지
+
         mosaic_images = torch.zeros_like(images)
         mosaic_labels = torch.zeros_like(labels)
-        
+
         for b_idx in range(batch_size):
-            # 각 이미지마다 Mosaic 적용
             new_image = torch.zeros((channels, height, width), device=device)
             new_label = torch.zeros_like(labels[b_idx])
-            
-            # grid_size x grid_size 그리드 생성
             cell_h, cell_w = height // grid_size, width // grid_size
-            
-            # 사용할 이미지 인덱스 선택 (현재 이미지 포함하여 무작위로)
-            image_indices = [b_idx] + random.choices(list(range(batch_size)), k=(grid_size*grid_size)-1)
+
+            image_indices = [b_idx] + random.choices(list(range(batch_size)), k=(grid_size * grid_size) - 1)
             random.shuffle(image_indices)
-            
-            # 가중치를 저장할 변수 (레이블 혼합에 사용)
+
             weights = []
             total_area = height * width
-            
-            # 그리드 채우기
+
             idx = 0
             for i in range(grid_size):
                 for j in range(grid_size):
                     src_idx = image_indices[idx]
                     src_img = images[src_idx]
-                    
-                    # 셀 영역 계산
+
                     y1, y2 = i * cell_h, (i + 1) * cell_h
                     x1, x2 = j * cell_w, (j + 1) * cell_w
-                    
-                    # 약간의 변동성을 위한 무작위 오프셋 (선택 사항)
-                    if i > 0 and j > 0 and i < grid_size-1 and j < grid_size-1:
-                        y1 = min(height-1, max(0, y1 + random.randint(-cell_h//4, cell_h//4)))
-                        y2 = min(height, max(y1+1, y2 + random.randint(-cell_h//4, cell_h//4)))
-                        x1 = min(width-1, max(0, x1 + random.randint(-cell_w//4, cell_w//4)))
-                        x2 = min(width, max(x1+1, x2 + random.randint(-cell_w//4, cell_w//4)))
-                    
-                    # 해당 셀에 이미지 할당
+
+                    if i > 0 and j > 0 and i < grid_size - 1 and j < grid_size - 1:
+                        y1 = min(height - 1, max(0, y1 + random.randint(-cell_h // 4, cell_h // 4)))
+                        y2 = min(height, max(y1 + 1, y2 + random.randint(-cell_h // 4, cell_h // 4)))
+                        x1 = min(width - 1, max(0, x1 + random.randint(-cell_w // 4, cell_w // 4)))
+                        x2 = min(width, max(x1 + 1, x2 + random.randint(-cell_w // 4, cell_w // 4)))
+
+                    if use_saliency:
+                        lam = np.random.beta(1.0, 1.0)
+                        bbx1, bby1, bbx2, bby2 = saliency_bbox(src_img, lam)
+                        crop = src_img[:, bbx1:bbx2, bby1:bby2]
+                        crop = F.interpolate(crop.unsqueeze(0), size=(y2 - y1, x2 - x1), mode='bilinear', align_corners=False).squeeze(0)
+                        new_image[:, y1:y2, x1:x2] = crop
+                    else:
+                        patch = src_img[:, y1:y2, x1:x2]
+                        new_image[:, y1:y2, x1:x2] = patch
+
                     cell_area = (y2 - y1) * (x2 - x1)
-                    new_image[:, y1:y2, x1:x2] = src_img[:, y1:y2, x1:x2]
-                    
-                    # 면적 가중치 계산
                     weight = cell_area / total_area
                     weights.append((src_idx, weight))
-                    
                     idx += 1
-            
-            # 레이블 혼합
+
             for src_idx, weight in weights:
                 new_label += labels[src_idx] * weight
-            
-            # 결과 저장
+
             mosaic_images[b_idx] = new_image
             mosaic_labels[b_idx] = new_label
-    
+
         return mosaic_images, mosaic_labels
+
     return images, labels
 
 

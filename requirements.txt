@@ -6,3 +6,4 @@ seaborn
 scikit-image
 streamlit
 albumentations
+pytorch-metric-learning
