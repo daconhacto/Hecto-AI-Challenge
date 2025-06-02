@@ -70,11 +70,15 @@ def apply_mosaic(images, labels, num_classes, p=0.5, grid_size=2, use_saliency=T
                         x2 = min(width, max(x1 + 1, x2 + random.randint(-cell_w // 4, cell_w // 4)))
 
                     if use_saliency:
-                        lam = np.random.beta(1.0, 1.0)
-                        bbx1, bby1, bbx2, bby2 = saliency_bbox(src_img, lam)
-                        crop = src_img[:, bbx1:bbx2, bby1:bby2]
-                        crop = F.interpolate(crop.unsqueeze(0), size=(y2 - y1, x2 - x1), mode='bilinear', align_corners=False).squeeze(0)
-                        new_image[:, y1:y2, x1:x2] = crop
+                        try:
+                            lam = np.random.beta(1.0, 1.0)
+                            bbx1, bby1, bbx2, bby2 = saliency_bbox(src_img, lam)
+                            crop = src_img[:, bbx1:bbx2, bby1:bby2]
+                            crop = F.interpolate(crop.unsqueeze(0), size=(y2 - y1, x2 - x1), mode='bilinear', align_corners=False).squeeze(0)
+                            new_image[:, y1:y2, x1:x2] = crop
+                        except:
+                            patch = src_img[:, y1:y2, x1:x2]
+                            new_image[:, y1:y2, x1:x2] = patch
                     else:
                         patch = src_img[:, y1:y2, x1:x2]
                         new_image[:, y1:y2, x1:x2] = patch
