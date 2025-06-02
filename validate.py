@@ -98,7 +98,9 @@ def validate_for_all_train_data():
     total_loss = 0.0
     total_samples = 0
     all_probs_epoch = []
+    all_logits_epoch = []
     all_labels_epoch = []
+    all_img_paths = []
     wrong_img_dict = defaultdict(list)
 
     with torch.no_grad():
@@ -115,8 +117,10 @@ def validate_for_all_train_data():
             _, preds = torch.max(outputs, 1)
             num_corrects += (preds == labels).sum().item()
             probs = F.softmax(outputs, dim=1)
+            all_logits_epoch.extend(outputs.cpu().numpy())
             all_probs_epoch.extend(probs.cpu().numpy())
             all_labels_epoch.extend(labels.cpu().numpy())
+            all_img_paths.extend(img_paths)
 
             avg_loss = total_loss / total_samples
             avg_acc = num_corrects / total_samples * 100
@@ -137,6 +141,11 @@ def validate_for_all_train_data():
     print(f"Loss : {(total_loss / total_samples):.4f}")
     print(f"accuracy : {(num_corrects / total_samples * 100):.4f}")
     print(f"log loss : {log_loss(all_labels_epoch, all_probs_epoch, labels=list(range(num_classes))):.4f}")
+    # 최종 DataFrame 생성
+    df = pd.DataFrame(all_logits_epoch, columns=class_names)
+    df.insert(0, "ID", all_img_paths)
+    output_submission_filename = os.path.join(work_dir, 'train_logits.csv')
+    df.to_csv(output_submission_filename, index=False, encoding='utf-8-sig')
 
     with open(os.path.join(work_dir, "all_wrong_examples.json"), "w", encoding="utf-8") as f:
         json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
