@@ -325,8 +325,8 @@ def train_main():
                 teacher_logits = 0.
                 with torch.no_grad():
                     for teacher in teacher_models:
-                        img_size = teacher['cfg']['IMG_SIZE']
-                        teacher_images = F.interpolate(images, size=(img_size,img_size), mode='bilinear', align_corners=False)
+                        img_size = teacher['cfg']['IMG_SIZE'] if isinstance(teacher['cfg']['IMG_SIZE'], tuple) else (teacher['cfg']['IMG_SIZE'], teacher['cfg']['IMG_SIZE'])
+                        teacher_images = F.interpolate(images, size=img_size, mode='bilinear', align_corners=False)
                         teacher_logits += (teacher['model'](teacher_images) / len(teacher_models))
                     
                 optimizer.zero_grad()
