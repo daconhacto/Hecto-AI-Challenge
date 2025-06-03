@@ -37,8 +37,16 @@ CFG = {
 
     # 반드시 제공되어야함. 현재 모델이 반드시 workdir 폴더 아래에 위치해 있는 게 보장은 안되는 거 같긴 한데
     # 일단 settings.json에서 모델명, 이미지 사이즈만 뽑아오는거고, 다른 정보는 사용하진 않아서 괜찮을듯 함
-    "TEACHER_MODEL_WORKDIRS": ['/home/sh/hecto/tjrgus5/work_dir/convnext_sailency_mosaic_halfcrop'],
-    "TEACHER_MODEL_PATHS": ['/home/sh/hecto/tjrgus5/work_dir/convnext_sailency_mosaic_halfcrop/best_model_convnext_base.fb_in22k_ft_in1k_384_fold1.pth'], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
+    "TEACHER_MODEL_WORKDIRS": [
+        '/home/sh/hecto/best_ensemble_models_1/convnext(1214)',
+        '/home/sh/hecto/best_ensemble_models_1/maxvit(1167)',
+        '/home/sh/hecto/best_ensemble_models_1/resnet101(1573)'
+    ],
+    "TEACHER_MODEL_PATHS": [
+        '/home/sh/hecto/best_ensemble_models_1/convnext(1214)/best_model_convnext_base(1214).pth',
+        '/home/sh/hecto/best_ensemble_models_1/maxvit(1167)/best_model_maxvit_base(1167).pth',
+        '/home/sh/hecto/best_ensemble_models_1/resnet101(1573)/best_model_resnet101_fold1(1573).pth'
+    ], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
 
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
     "WRONG_THRESHOLD": 0.7,
@@ -47,11 +55,11 @@ CFG = {
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": {
         'enable': True,
-        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+        'params':{'alpha':1.0}
     },
     "MIXUP": {
         'enable': True,
-        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+        'params':{'alpha':1.0}
     },
     "MOSAIC": {
         'enable': True,
