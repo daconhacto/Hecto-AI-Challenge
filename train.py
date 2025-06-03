@@ -276,9 +276,21 @@ def train_main():
                     for idx in wrong_indices:
                         path = img_paths[idx]  # 예: 'data/train/cat/image1.jpg'
                         parent_folder = os.path.basename(os.path.dirname(path))  # 예: 'cat'
+                        pred = preds[idx]
+                        label = labels[idx]
+
+                        if pred == label:
+                            # 예측은 맞았지만 confidence가 낮음 → 두 번째로 높은 클래스 선택
+                            sorted_probs, sorted_indices = probs[idx].sort(descending=True)
+                            second_best_class = sorted_indices[1].item()
+                            model_answer = class_names[second_best_class]
+                        else:
+                            # 아예 틀린 예측 → 기존대로 예측 결과 사용
+                            model_answer = class_names[pred]
+
                         wrong_img_dict[parent_folder].append({
                             'image_path': path,
-                            'model_answer': class_names[preds[idx]]
+                            'model_answer': model_answer
                         })
                 with open(os.path.join(wrong_save_path, f"Fold_{fold_num}_Epoch_{epoch+1}_wrong_examples.json"), "w", encoding="utf-8") as f:
                     json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
