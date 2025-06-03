@@ -11,11 +11,11 @@ from torch.utils.data import Dataset, DataLoader
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 # train.py에서 필요한 클래스와 함수, CFG를 가져옴
-from albu_train import CustomTimmModel
 from dataset import InitialCustomImageDataset, FoldSpecificDataset
-from utils import *
 from sklearn.metrics import log_loss
 import torch.nn.functional as F
+from utils import *
+from model import *
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

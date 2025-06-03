@@ -9,9 +9,10 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import torch.nn.functional as F
 # train.py에서 필요한 클래스와 함수, CFG를 가져옴
-from albu_train import CustomTimmModel, CFG as TRAIN_CFG
+from train import CFG as TRAIN_CFG
 from utils import *
 from dataset import *
+from model import *
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -11,8 +11,8 @@ import torch.nn.functional as F
 # train.py에서 필요한 클래스와 함수, CFG를 가져옴
 from utils import *
 from dataset import TestCustomImageDataset
-from albu_train import CustomTimmModel
 from albumentations.pytorch import ToTensorV2
+from model import *
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

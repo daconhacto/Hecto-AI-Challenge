@@ -24,6 +24,7 @@ from albumentations.pytorch import ToTensorV2
 from augmentations import *
 from utils import *
 from dataset import *
+from model import *
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -109,22 +110,6 @@ def get_randaugment_curriculum_transform(epoch, total_epochs, start, end):
 
 def get_alpha(epoch, total_epochs, start, end):
     return start + (epoch / total_epochs) * (end - start)  # 0.1 → 1.0 선형 증가
-
-# Model Define (inf.py에서도 사용)
-class CustomTimmModel(nn.Module):
-    def __init__(self, model_name, num_classes_to_predict, pretrained=True):
-        super(CustomTimmModel, self).__init__()
-        try:
-            self.backbone = timm.create_model(model_name, pretrained=pretrained, num_classes=0, global_pool='avg')
-            self.feature_dim = self.backbone.num_features
-        except Exception as e:
-            print(f"Error creating model {model_name} with timm. Error: {e}")
-            raise
-        self.head = nn.Linear(self.feature_dim, num_classes_to_predict)
-    def forward(self, x):
-        features = self.backbone(x)
-        output = self.head(features)
-        return output
 
 
 def train_main():

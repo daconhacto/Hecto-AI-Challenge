@@ -23,6 +23,7 @@ from albumentations.pytorch import ToTensorV2
 from augmentations import *
 from utils import *
 from dataset import *
+from model import *
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -90,23 +91,6 @@ def distillation_loss(student_logits, teacher_logits, labels, T=4.0, alpha=0.7):
     loss_hard = F.cross_entropy(student_logits, labels)
 
     return alpha * loss_soft + (1 - alpha) * loss_hard
-
-
-# Model Define (inf.py에서도 사용)
-class CustomTimmModel(nn.Module):
-    def __init__(self, model_name, num_classes_to_predict, pretrained=True):
-        super(CustomTimmModel, self).__init__()
-        try:
-            self.backbone = timm.create_model(model_name, pretrained=pretrained, num_classes=0, global_pool='avg')
-            self.feature_dim = self.backbone.num_features
-        except Exception as e:
-            print(f"Error creating model {model_name} with timm. Error: {e}")
-            raise
-        self.head = nn.Linear(self.feature_dim, num_classes_to_predict)
-    def forward(self, x):
-        features = self.backbone(x)
-        output = self.head(features)
-        return output
 
 def validate_for_all_train_data(TEACHER_CFG):
     print("Using device:", device)
