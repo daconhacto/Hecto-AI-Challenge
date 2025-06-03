@@ -49,7 +49,7 @@ CFG = {
     "CUTOUT": False,
 
     # 기타 설정값들
-    'IMG_SIZE': 448,
+    'IMG_SIZE': 448, # Number or Tuple(Height, Width)
     'BATCH_SIZE': 32, # 학습 시 배치 크기
     'EPOCHS': 25,
     'SEED' : 42,
@@ -82,17 +82,17 @@ CFG = {
     },
 }
 
-
+CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
 # 이미지 변환 정의 Albumentation하고 torchvision 어느 라이브러리를 활용하든 상관없이 적용 가능
 train_transform = transforms.Compose([
-    transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
     v2.AugMix(severity=4),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 val_transform = transforms.Compose([ # inf.py의 test_transform과 동일해야 함
-    transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])

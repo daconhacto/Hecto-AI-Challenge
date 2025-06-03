@@ -83,16 +83,17 @@ CFG = {
     },
 }
 
+CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
 # 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
 train_transform = transforms.Compose([
-    transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
     transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=3, interpolation=transforms.InterpolationMode.BICUBIC), # 
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 val_transform = transforms.Compose([ # inf.py의 test_transform과 동일해야 함
-    transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
@@ -103,7 +104,7 @@ def get_randaugment_curriculum_transform(epoch, total_epochs, start, end):
     print(f"[Epoch {epoch}] RandAugment Magnitude: {magnitude}")
     
     transform = T.Compose([
-        transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+        transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
         transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=magnitude, interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])

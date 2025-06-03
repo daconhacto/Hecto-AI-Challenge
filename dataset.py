@@ -36,7 +36,7 @@ class FoldSpecificDataset(Dataset):
         self.samples_list = samples_list
         self.transform = transform
         self.is_train = is_train
-        self.image_size = image_size
+        self.image_size = image_size if isinstance(image_size, tuple) else (image_size, image_size)
         self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
 
     def __len__(self):
@@ -47,7 +47,7 @@ class FoldSpecificDataset(Dataset):
         try:
             image = Image.open(img_path).convert('RGB')
         except FileNotFoundError:
-            dummy_tensor = torch.zeros((3, self.image_size, self.image_size))
+            dummy_tensor = torch.zeros((3, self.image_size[0], self.image_size[1]))
             return (dummy_tensor, 0) if self.is_train else (dummy_tensor, 0, img_path)
         
         # transform이 Albumentations인지 torchvision인지 구분
@@ -66,7 +66,7 @@ class TestCustomImageDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.samples = []
-        self.image_size = image_size
+        self.image_size = image_size if isinstance(image_size, tuple) else (image_size, image_size)
         self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
         if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
             print(f"Warning: Test directory {root_dir} not found or is not a directory.")
@@ -84,7 +84,7 @@ class TestCustomImageDataset(Dataset):
             image = Image.open(img_path).convert('RGB')
         except FileNotFoundError:
             # print(f"Warning: File not found {img_path}, returning a dummy image.")
-            return torch.zeros((3, self.image_size, self.image_size))
+            return torch.zeros((3, self.image_size[0], self.image_size[1]))
         if self.transform:
             if self.is_albu_transform:
                 image = np.array(image)
@@ -146,7 +146,7 @@ class TTATestCustomImageDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.tta_times = tta_times
-        self.img_size = img_size
+        self.img_size = img_size if isinstance(img_size, tuple) else (img_size, img_size)
         self.samples = []
         self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
 
@@ -167,7 +167,7 @@ class TTATestCustomImageDataset(Dataset):
         try:
             image = Image.open(img_path).convert('RGB')
         except FileNotFoundError:
-            return [torch.zeros((3, self.img_size, self.img_size)) for _ in range(self.tta_times)]
+            return [torch.zeros((3, self.img_size[0], self.img_size[1])) for _ in range(self.tta_times)]
 
         # transform이 Albumentations인지 torchvision인지 구분
         if self.is_albu_transform:
@@ -181,7 +181,7 @@ class KDDataset(Dataset):
     def __init__(self, samples_list, image_size, transform=None, teacher_img_sizes=None):
         self.samples_list = samples_list
         self.transform = transform
-        self.image_size = image_size
+        self.image_size = image_size if isinstance(image_size, tuple) else (image_size, image_size)
         self.teacher_img_sizes = teacher_img_sizes
         self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
 
@@ -193,7 +193,7 @@ class KDDataset(Dataset):
         try:
             image = Image.open(img_path).convert('RGB')
         except FileNotFoundError:
-            dummy_tensor = torch.zeros((3, self.image_size, self.image_size))
+            dummy_tensor = torch.zeros((3, self.image_size[0], self.image_size[1]))
             return (dummy_tensor, 0) if self.is_train else (dummy_tensor, 0, img_path)
         
         # transform이 Albumentations인지 torchvision인지 구분

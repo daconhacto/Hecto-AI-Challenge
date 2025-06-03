@@ -41,11 +41,12 @@ def validate_for_all_train_data():
     filtered_data = {k: v for k, v in TRAIN_CFG.items() if k not in CFG.keys()}
     CFG.update(filtered_data)
     print(f"Inference CFG: {CFG}")
+    CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
     seed_everything(CFG['SEED'])
     
     # transform 정의
     val_transform = A.Compose([
-        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
+        A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
     ])

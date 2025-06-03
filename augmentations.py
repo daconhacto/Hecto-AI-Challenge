@@ -9,8 +9,10 @@ import torchvision.transforms as transforms
 
 
 def get_default_train_transform_albu(img_size):
+    img_size = img_size if isinstance(img_size, tuple) else (img_size, img_size)
+
     return A.Compose([
-        A.Resize(img_size, img_size),
+        A.Resize(img_size[0], img_size[1]),
         A.HorizontalFlip(p=0.5),
         A.Rotate(limit=15, p=0.5),
         A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
@@ -20,15 +22,19 @@ def get_default_train_transform_albu(img_size):
     ])
 
 def get_default_val_transform_albu(img_size):
+    img_size = img_size if isinstance(img_size, tuple) else (img_size, img_size)
+
     return A.Compose([
-        A.Resize(img_size, img_size),
+        A.Resize(img_size[0], img_size[1]),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
     ])
 
 def get_default_train_transform_torchvision(img_size):
+    img_size = img_size if isinstance(img_size, tuple) else (img_size, img_size)
+
     transforms.Compose([
-        transforms.Resize((img_size, img_size)),
+        transforms.Resize((img_size[0], img_size[1])),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(15),
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
@@ -38,8 +44,10 @@ def get_default_train_transform_torchvision(img_size):
     ])
 
 def get_default_val_transform_torchvision(img_size):
+    img_size = img_size if isinstance(img_size, tuple) else (img_size, img_size)
+
     transforms.Compose([ # inf.py의 test_transform과 동일해야 함
-        transforms.Resize((img_size, img_size)),
+        transforms.Resize((img_size[0], img_size[1])),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
