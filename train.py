@@ -33,7 +33,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CFG = {
     "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/train',
     "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/logging_test',
+
+    # retraining 설정
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
+    "GROUP_PATH": None, # 만약 None이 아닌 group.json의 경로르 입력하면 해당 class들만 활용하여 train을 진행함
     
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
     "WRONG_THRESHOLD": 0.7,
@@ -44,8 +47,8 @@ CFG = {
     "MIXUP":  True,
     "MOSAIC": True,
     "CUTOUT": False,
-    #################
 
+    # 기타 설정값들
     'IMG_SIZE': 448,
     'BATCH_SIZE': 32, # 학습 시 배치 크기
     'EPOCHS': 25,
@@ -56,6 +59,7 @@ CFG = {
     'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
     
+
     # 새롭게 추가된 logging파트. class의 경우 무조건 풀경로로 적어야합니다. nn.CrossEntropyLoss 처럼 적으면 오류남
     'LOSS': {
         'class': 'torch.nn.CrossEntropyLoss',
@@ -180,7 +184,19 @@ def train_main():
         val_samples_fold = [all_samples[i] for i in val_indices]
         train_dataset_fold = FoldSpecificDataset(train_samples_fold, image_size = CFG['IMG_SIZE'], transform=train_transform)
         val_dataset_fold = FoldSpecificDataset(val_samples_fold, image_size = CFG['IMG_SIZE'], transform=val_transform, is_train=False)
-        train_loader = DataLoader(train_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=True, num_workers=2, pin_memory=True)
+
+        # group_path가 설정되어 있으면 해당 class들로만 훈련을 진행
+        # group 로드
+        if CFG['GROUP_PATH']:
+            with open(CFG['GROUP_PATH'], 'r') as f:
+                wrong_example_group = json.load(f)
+            wrong_example_group = convert_classname_groups_to_index_groups(wrong_example_group, class_names)
+            # difficult example sampling을 위한 전처리 과정
+            label_to_indices = build_class_index_map(train_samples_fold)
+            sampler = GroupedBatchSampler(label_to_indices, wrong_example_group, CFG['BATCH_SIZE'])
+            train_loader = DataLoader(train_dataset_fold, num_workers=2, pin_memory=True, batch_sampler=sampler)
+        else:
+            train_loader = DataLoader(train_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=True, num_workers=2, pin_memory=True)
         val_loader = DataLoader(val_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=False, num_workers=2, pin_memory=True)
         print(f"Fold {fold_num}: Train images: {len(train_dataset_fold)}, Validation images: {len(val_dataset_fold)}")
 

@@ -143,3 +143,20 @@ def get_total_wrong_groups(work_dir, start_epoch):
     with open(os.path.join(work_dir, 'groups.json'), 'w') as f:
         json.dump(groups, f)
     print(f'total wrong group saved to {os.path.join(work_dir, 'groups.json')}')
+
+
+# 각 클래스에 속한 샘플 인덱스 사전 생성
+def build_class_index_map(samples):
+    label_to_indices = defaultdict(list)
+    for idx, sample in enumerate(samples):
+        _, label = sample
+        label_to_indices[label].append(idx)
+    return label_to_indices
+
+def convert_classname_groups_to_index_groups(groups, class_names):
+    class_to_index = {cls_name: idx for idx, cls_name in enumerate(class_names)}
+    
+    index_groups = {}
+    for i, group in enumerate(groups):
+        index_groups[i] = [class_to_index[cls] for cls in group if cls in class_to_index]
+    return index_groups
