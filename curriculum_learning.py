@@ -35,6 +35,10 @@ CFG = {
     "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/backup/work_directories/convnext_curriculum learning_5',
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
 
+    # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
+    "WRONG_THRESHOLD": 0.7,
+    "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
+
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": True,
     "MIXUP":  True,
@@ -46,8 +50,6 @@ CFG = {
     "RANDAUG_RANGE": (3, 9),
     "RANDAUG_NUM_OPS": 3,
     #################
-    
-    "WRONG_THRESHOLD": 0.7,
 
     'IMG_SIZE': 640,
     'BATCH_SIZE': 32, # 학습 시 배치 크기
@@ -360,6 +362,9 @@ def train_main():
     print(f"\nOverall Best LogLoss (among executed folds): {overall_best_logloss if overall_best_logloss != float('inf') else 'N/A'}")
     print(f"Path to the overall best model for inference: {overall_best_model_path if overall_best_model_path else 'N/A'}")
     print("Training finished.")
+
+    # 전체 틀린 그룹을 저장
+    get_total_wrong_groups(work_dir, CFG['GROUP_JSON_START_EPOCH'])
 
 
 if __name__ == '__main__':

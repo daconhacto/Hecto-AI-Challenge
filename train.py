@@ -37,6 +37,7 @@ CFG = {
     
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
     "WRONG_THRESHOLD": 0.7,
+    "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": True,
@@ -78,7 +79,7 @@ CFG = {
 }
 
 
-# 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
+# 이미지 변환 정의 Albumentation하고 torchvision 어느 라이브러리를 활용하든 상관없이 적용 가능
 train_transform = transforms.Compose([
     transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
     v2.AugMix(severity=4),
@@ -324,6 +325,9 @@ def train_main():
     print(f"\nOverall Best LogLoss (among executed folds): {overall_best_logloss if overall_best_logloss != float('inf') else 'N/A'}")
     print(f"Path to the overall best model for inference: {overall_best_model_path if overall_best_model_path else 'N/A'}")
     print("Training finished.")
+
+    # 전체 틀린 그룹을 저장
+    get_total_wrong_groups(work_dir, CFG['GROUP_JSON_START_EPOCH'])
 
 
 if __name__ == '__main__':

@@ -142,3 +142,4 @@ def get_total_wrong_groups(work_dir, start_epoch):
     groups = find_class_groups_from_jsons(wrong_examples, start_epoch)
     with open(os.path.join(work_dir, 'groups.json'), 'w') as f:
         json.dump(groups, f)
+    print(f'total wrong group saved to {os.path.join(work_dir, 'groups.json')}')
