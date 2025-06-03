@@ -45,11 +45,11 @@ CFG = {
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": {
         'enable': True,
-        'params':{'alpha':1}
+        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
     },
     "MIXUP": {
         'enable': True,
-        'params':{'alpha':1}
+        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
     },
     "MOSAIC": {
         'enable': True,

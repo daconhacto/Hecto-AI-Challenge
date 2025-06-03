@@ -31,26 +31,44 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "WORK_DIR": '/home/sh/hecto/tjrgus5/work_dir/convnext1214_half_image_retraining', # train.py로 생성된 work_directory
-    "ROOT": '/home/sh/hecto/train', # data_path
-    "BATCH_SIZE": 64,
+    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/kd_test', # train.py로 생성된 work_directory
+    "ROOT": '/home/sh/hecto/hecto_datasets/train_v1+v3', # data_path
+    "START_FROM": None,
 
     # 반드시 제공되어야함. 현재 모델이 반드시 workdir 폴더 아래에 위치해 있는 게 보장은 안되는 거 같긴 한데
     # 일단 settings.json에서 모델명, 이미지 사이즈만 뽑아오는거고, 다른 정보는 사용하진 않아서 괜찮을듯 함
-    "TEACHER_MODEL_WORKDIRS": [],
-    "TEACHER_MODEL_PATHS": [], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
+    "TEACHER_MODEL_WORKDIRS": ['/home/sh/hecto/tjrgus5/work_dir/convnext_sailency_mosaic_halfcrop'],
+    "TEACHER_MODEL_PATHS": ['/home/sh/hecto/tjrgus5/work_dir/convnext_sailency_mosaic_halfcrop/best_model_convnext_base.fb_in22k_ft_in1k_384_fold1.pth'], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
 
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
     "WRONG_THRESHOLD": 0.7,
+    "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
-    "CUTMIX": True,
-    "MIXUP":  True,
-    "MOSAIC": True,
-    "CUTOUT": False,
-    #################
+    "CUTMIX": {
+        'enable': True,
+        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+    },
+    "MIXUP": {
+        'enable': True,
+        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+    },
+    "MOSAIC": {
+        'enable': True,
+        'params':{
+            'p': 1.0,
+            'grid_size': 2,
+            'use_saliency': True
+        }
+    },
+    "CUTOUT": {
+        'enable': False,
+        'params':{
+            'mask_size': 32
+        }
+    },
 
-    'IMG_SIZE': 448,
+    'IMG_SIZE': 512,
     'BATCH_SIZE': 32, # 학습 시 배치 크기
     'EPOCHS': 25,
     'SEED' : 42,
@@ -98,9 +116,9 @@ augmentation_transform = [
     A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ToTensorV2()
 ]
-train_transform = A.Compose([
+train_transform = A.Compose(
     resize_transform + augmentation_transform
-])
+)
 
 val_transform = A.Compose([
     A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
@@ -117,8 +135,8 @@ def loss_fn_kd(outputs, labels, teacher_outputs, params):
     NOTE: the KL Divergence for PyTorch comparing the softmaxs of teacher
     and student expects the input tensor to be log probabilities! See Issue #2
     """
-    alpha = params.alpha
-    T = params.temperature
+    alpha = params['alpha']
+    T = params['temperature']
     KD_loss = nn.KLDivLoss()(F.log_softmax(outputs/T, dim=1),
                              F.softmax(teacher_outputs/T, dim=1)) * (alpha * T * T) + \
               F.cross_entropy(outputs, labels) * (1. - alpha)
@@ -209,16 +227,16 @@ def train_main():
     print(f"클래스: {class_names} (총 {num_classes}개)")
 
     # cutmix or mixup transform settings
-    if CFG['CUTMIX'] and CFG["MIXUP"]:
-        cutmix = v2.CutMix(num_classes=num_classes)
-        mixup = v2.MixUp(num_classes=num_classes)
+    if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
+        cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+        mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
         cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
         print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['CUTMIX']:
-        cutmix_or_mixup = v2.CutMix(num_classes=num_classes)
+    elif CFG['CUTMIX']['enable']:
+        cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
         print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['MIXUP']:
-        cutmix_or_mixup = v2.MixUp(num_classes=num_classes)
+    elif CFG["MIXUP"]['enable']:
+        cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
         print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
     else:
         cutmix_or_mixup = None
@@ -292,16 +310,16 @@ def train_main():
                     choice = None
                     
                 # cutout을 위해 추가
-                if CFG['CUTOUT'] and choice == 'CUTOUT':
-                    images = apply_cutout(images, mask_size = 64)
+                if CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
+                    images = apply_cutout(images, **CFG['CUTOUT']['params'])
                 
                 # cutmix mixup을 위해 추가
                 if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
                     images, labels = cutmix_or_mixup(images, labels)
                 
                 # MOSAIC을 위해 추가
-                if CFG['MOSAIC'] and (choice == 'MOSAIC'):
-                    images, labels = apply_mosaic(images, labels, num_classes)
+                if CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
+                    images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
                 
                 # teacher의 logit 뽑아내기
                 teacher_logits = 0.
@@ -345,9 +363,21 @@ def train_main():
                     for idx in wrong_indices:
                         path = img_paths[idx]  # 예: 'data/train/cat/image1.jpg'
                         parent_folder = os.path.basename(os.path.dirname(path))  # 예: 'cat'
+                        pred = preds[idx]
+                        label = labels[idx]
+
+                        if pred == label:
+                            # 예측은 맞았지만 confidence가 낮음 → 두 번째로 높은 클래스 선택
+                            sorted_probs, sorted_indices = probs[idx].sort(descending=True)
+                            second_best_class = sorted_indices[1].item()
+                            model_answer = class_names[second_best_class]
+                        else:
+                            # 아예 틀린 예측 → 기존대로 예측 결과 사용
+                            model_answer = class_names[pred]
+
                         wrong_img_dict[parent_folder].append({
                             'image_path': path,
-                            'model_answer': class_names[preds[idx]]
+                            'model_answer': model_answer
                         })
                 with open(os.path.join(wrong_save_path, f"Fold_{fold_num}_Epoch_{epoch+1}_wrong_examples.json"), "w", encoding="utf-8") as f:
                     json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
@@ -410,3 +440,9 @@ def train_main():
     print(f"\nOverall Best LogLoss (among executed folds): {overall_best_logloss if overall_best_logloss != float('inf') else 'N/A'}")
     print(f"Path to the overall best model for inference: {overall_best_model_path if overall_best_model_path else 'N/A'}")
     print("Training finished.")
+
+    # 전체 틀린 그룹을 저장
+    get_total_wrong_groups(work_dir, CFG['GROUP_JSON_START_EPOCH'])
+
+if __name__ == '__main__':
+    train_main()
