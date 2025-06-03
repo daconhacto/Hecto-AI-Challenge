@@ -42,8 +42,20 @@ CFG = {
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": True,
     "MIXUP":  True,
-    "MOSAIC": True,
-    "CUTOUT": False,
+    "MOSAIC": {
+        'enable': True,
+        'params':{
+            'p': 1.0,
+            'grid_size': 2,
+            'use_saliency': True
+        }
+    },
+    "CUTOUT": {
+        'enable': False,
+        'params':{
+            'mask_size': 32
+        }
+    },
 
     # curriculum learning 관련 설정
     "ALPHA_RANGE": (0.1, 1.3),
@@ -240,16 +252,16 @@ def train_main():
                     choice = None
                     
                 # cutout을 위해 추가
-                if CFG['CUTOUT'] and choice == 'CUTOUT':
-                    images = apply_cutout(images, mask_size = 64)
+                if CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
+                    images = apply_cutout(images, **CFG['CUTOUT']['params'])
                 
                 # cutmix mixup을 위해 추가
                 if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
                     images, labels = cutmix_or_mixup(images, labels)
                 
                 # MOSAIC을 위해 추가
-                if CFG['MOSAIC'] and (choice == 'MOSAIC'):
-                    images, labels = apply_mosaic(images, labels, num_classes)
+                if CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
+                    images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
 
                 optimizer.zero_grad()
                 outputs = model(images)

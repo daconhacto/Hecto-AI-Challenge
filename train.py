@@ -43,10 +43,28 @@ CFG = {
     "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
-    "CUTMIX": True,
-    "MIXUP":  True,
-    "MOSAIC": True,
-    "CUTOUT": False,
+    "CUTMIX": {
+        'enable': True,
+        'params':{'alpha':1}
+    },
+    "MIXUP": {
+        'enable': True,
+        'params':{'alpha':1}
+    },
+    "MOSAIC": {
+        'enable': True,
+        'params':{
+            'p': 1.0,
+            'grid_size': 2,
+            'use_saliency': True
+        }
+    },
+    "CUTOUT": {
+        'enable': False,
+        'params':{
+            'mask_size': 32
+        }
+    },
 
     # 기타 설정값들
     'IMG_SIZE': 448, # Number or Tuple(Height, Width)
@@ -138,16 +156,16 @@ def train_main():
     print(f"클래스: {class_names} (총 {num_classes}개)")
 
     # cutmix or mixup transform settings
-    if CFG['CUTMIX'] and CFG["MIXUP"]:
-        cutmix = v2.CutMix(num_classes=num_classes)
-        mixup = v2.MixUp(num_classes=num_classes)
+    if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
+        cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+        mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
         cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
         print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['CUTMIX']:
-        cutmix_or_mixup = v2.CutMix(num_classes=num_classes)
+    elif CFG['CUTMIX']['enable']:
+        cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
         print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['MIXUP']:
-        cutmix_or_mixup = v2.MixUp(num_classes=num_classes)
+    elif CFG["MIXUP"]['enable']:
+        cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
         print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
     else:
         cutmix_or_mixup = None
@@ -231,16 +249,16 @@ def train_main():
                     choice = None
                     
                 # cutout을 위해 추가
-                if CFG['CUTOUT'] and choice == 'CUTOUT':
-                    images = apply_cutout(images, mask_size = 64)
+                if CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
+                    images = apply_cutout(images, **CFG['CUTOUT']['params'])
                 
                 # cutmix mixup을 위해 추가
                 if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
                     images, labels = cutmix_or_mixup(images, labels)
                 
                 # MOSAIC을 위해 추가
-                if CFG['MOSAIC'] and (choice == 'MOSAIC'):
-                    images, labels = apply_mosaic(images, labels, num_classes)
+                if CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
+                    images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
 
                 optimizer.zero_grad()
                 outputs = model(images)
