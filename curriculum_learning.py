@@ -39,8 +39,11 @@ CFG = {
     "MIXUP":  True,
     "MOSAIC": True,
     "CUTOUT": False,
-    "ALPHA_RANGE": (0.1, 2.0),
-    "RANDAUG_RANGE": (3, 10),
+
+    # curriculum learning 관련 설정
+    "ALPHA_RANGE": (0.1, 1.3),
+    "RANDAUG_RANGE": (3, 9),
+    "RANDAUG_NUM_OPS": 3,
     #################
     
     "WRONG_THRESHOLD": 0.7,
@@ -80,7 +83,7 @@ CFG = {
 # 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
 train_transform = transforms.Compose([
     transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
-    transforms.RandAugment(num_ops=3, magnitude=3, interpolation=transforms.InterpolationMode.BICUBIC), # 
+    transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=3, interpolation=transforms.InterpolationMode.BICUBIC), # 
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
@@ -94,15 +97,11 @@ val_transform = transforms.Compose([ # inf.py의 test_transform과 동일해야 
 def get_randaugment_curriculum_transform(epoch, total_epochs, start, end):
     # magnitude를 start ~ end사이에서 선형증가
     magnitude = int(start + ((end-start) * epoch / total_epochs))  # 3 ~ 9 사이
-
-    # num ops 2 ~ 4
-    # num_ops = int(2 + (2 * epoch / total_epochs))
-    num_ops = 3 # 강도 너무 높아지는걸 방지하기 위해 ops수는 2로 고정해서 재실험
     print(f"[Epoch {epoch}] RandAugment Magnitude: {magnitude}")
     
     transform = T.Compose([
         transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
-        transforms.RandAugment(num_ops=num_ops, magnitude=5, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=magnitude, interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])

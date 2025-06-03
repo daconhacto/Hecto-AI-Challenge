@@ -32,7 +32,7 @@ def saliency_bbox(img, lam):
 
 
 # 확률적으로 Mosaic 적용을 위한 함수
-def apply_mosaic(images, labels, num_classes, p=0.5, grid_size=2, use_saliency=True):
+def apply_mosaic(images, labels, num_classes, p=1.0, grid_size=2, use_saliency=True):
     if random.random() < p:
         batch_size, channels, height, width = images.shape
         device = images.device
