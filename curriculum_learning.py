@@ -1,5 +1,6 @@
+# train.py하고 크게 다를 건 없으나 Albumentation을 적용해보기 위해 작성한 .py파일입니다.
+
 import os
-import gc
 import sys
 import json
 import random
@@ -11,7 +12,6 @@ import json # class_names 저장을 위해 추가
 from sklearn.model_selection import StratifiedKFold
 import torch
 from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms.functional as TF
 import timm
 import torchvision.transforms as transforms
 from torchvision.transforms import v2
@@ -30,45 +30,36 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "WORK_DIR": '/home/sh/hecto/tjrgus5/work_dir/convnext1214_half_image_retraining', # train.py로 생성된 work_directory
-    "ROOT": '/home/sh/hecto/train', # data_path
-    "BATCH_SIZE": 64,
-
-    # 반드시 제공되어야함. 현재 모델이 반드시 workdir 폴더 아래에 위치해 있는 게 보장은 안되는 거 같긴 한데
-    # 일단 settings.json에서 모델명, 이미지 사이즈만 뽑아오는거고, 다른 정보는 사용하진 않아서 괜찮을듯 함
-    "TEACHER_MODEL_WORKDIRS": [],
-    "TEACHER_MODEL_PATHS": [], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
-
-    # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
-    "WRONG_THRESHOLD": 0.7,
+    "ROOT": '/project/ahnailab/jys0207/CP/tjrgus5/train_renovate_v3',
+    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/backup/work_directories/convnext_curriculum learning_5',
+    "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": True,
     "MIXUP":  True,
     "MOSAIC": True,
     "CUTOUT": False,
+    "ALPHA_RANGE": (0.1, 2.0),
+    "RANDAUG_RANGE": (3, 10),
     #################
+    
+    "WRONG_THRESHOLD": 0.7,
 
-    'IMG_SIZE': 448,
+    'IMG_SIZE': 640,
     'BATCH_SIZE': 32, # 학습 시 배치 크기
-    'EPOCHS': 25,
+    'EPOCHS': 30,
     'SEED' : 42,
     'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
     'N_FOLDS': 5,
-    'EARLY_STOPPING_PATIENCE': 3,
+    'EARLY_STOPPING_PATIENCE': 5,
     'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
-    
-    # KD LOSS
-    'KD_PARAMS': {
-        'alpha': 0.7,
-        'temperature': 4.0
-    },
     
     # 새롭게 추가된 logging파트. class의 경우 무조건 풀경로로 적어야합니다. nn.CrossEntropyLoss 처럼 적으면 오류남
     'LOSS': {
         'class': 'torch.nn.CrossEntropyLoss',
-        'params': {}   
+        'params': {
+        }   
     },
     'OPTIMIZER': {
         'class': 'torch.optim.AdamW',
@@ -78,52 +69,47 @@ CFG = {
         }
     },
     'SCHEDULER': {
-        'class': 'torch.optim.lr_scheduler.ReduceLROnPlateau',
+        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
         'params': {
-            'mode': 'min',
-            'factor': 0.1,
-            'patience':2
+            'T_max': 30,
+            'eta_min': 1e-7
         }
     },
 }
 
-# --- Albumentations 기반 이미지 변환 정의 ---
-resize_transform = [A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE'])]
-augmentation_transform = [
-    A.HorizontalFlip(p=0.5),
-    A.Rotate(limit=15, p=0.5),
-    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
-    A.Affine(translate_percent=(0.1, 0.1), scale=(0.9, 1.1), shear=10, rotate=0, p=0.5),
-    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
-]
-train_transform = A.Compose([
-    resize_transform + augmentation_transform
+# 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
+train_transform = transforms.Compose([
+    transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+    transforms.RandAugment(num_ops=3, magnitude=3, interpolation=transforms.InterpolationMode.BICUBIC), # 
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-val_transform = A.Compose([
-    A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
-    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
+val_transform = transforms.Compose([ # inf.py의 test_transform과 동일해야 함
+    transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
+def get_randaugment_curriculum_transform(epoch, total_epochs, start, end):
+    # magnitude를 start ~ end사이에서 선형증가
+    magnitude = int(start + ((end-start) * epoch / total_epochs))  # 3 ~ 9 사이
 
-def loss_fn_kd(outputs, labels, teacher_outputs, params):
-    """
-    Compute the knowledge-distillation (KD) loss given outputs, labels.
-    "Hyperparameters": temperature and alpha
+    # num ops 2 ~ 4
+    # num_ops = int(2 + (2 * epoch / total_epochs))
+    num_ops = 3 # 강도 너무 높아지는걸 방지하기 위해 ops수는 2로 고정해서 재실험
+    print(f"[Epoch {epoch}] RandAugment Magnitude: {magnitude}")
+    
+    transform = T.Compose([
+        transforms.Resize((CFG['IMG_SIZE'], CFG['IMG_SIZE'])),
+        transforms.RandAugment(num_ops=num_ops, magnitude=5, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    return transform
 
-    NOTE: the KL Divergence for PyTorch comparing the softmaxs of teacher
-    and student expects the input tensor to be log probabilities! See Issue #2
-    """
-    alpha = params.alpha
-    T = params.temperature
-    KD_loss = nn.KLDivLoss()(F.log_softmax(outputs/T, dim=1),
-                             F.softmax(teacher_outputs/T, dim=1)) * (alpha * T * T) + \
-              F.cross_entropy(outputs, labels) * (1. - alpha)
-
-    return KD_loss
-
+def get_alpha(epoch, total_epochs, start, end):
+    return start + (epoch / total_epochs) * (end - start)  # 0.1 → 1.0 선형 증가
 
 # Model Define (inf.py에서도 사용)
 class CustomTimmModel(nn.Module):
@@ -142,47 +128,6 @@ class CustomTimmModel(nn.Module):
         return output
 
 
-def get_teacher_models():
-    # work_directory
-    teacher_models = []
-    for work_dir, model_path in zip(CFG['TEACHER_MODEL_WORKDIRS'], CFG['TEACHER_MODEL_PATHS']):
-        # 세팅을 위해 teacher model의 CFG 가져오기
-        with open(os.path.join(work_dir, "settings.json"), "r") as f:
-            TEACHER_CFG = json.load(f)
-            
-        # class_names 로드
-        try:
-            with open(os.path.join(work_dir, 'class_names.json'), 'r') as f:
-                class_names = json.load(f)
-        except FileNotFoundError:
-            print("Error: class_names.json not found. Please run train.py first to generate it.")
-            return
-        num_classes = len(class_names)
-        print(f"Loaded class_names: {class_names} (Total: {num_classes})")
-        
-        # load model
-        teacher_model = CustomTimmModel(model_name=TEACHER_CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
-        
-        if not os.path.exists(model_path):
-            print(f"Error: Model file {model_path} not found. Please check the path in CFG_INF['MODEL_PATH'].")
-            print("You might need to run train.py first or update the path to the desired .pth file.")
-            return
-            
-        try:
-            teacher_model.load_state_dict(torch.load(model_path, map_location=device))
-            print(f"Loaded model from {model_path}")
-        except Exception as e:
-            print(f"Error loading model state_dict from {model_path}: {e}")
-            print("Ensure the model architecture in train.py (CustomTimmModel) matches the saved model.")
-            return
-        
-        teacher_models.append({
-            'cfg': TEACHER_CFG,
-            'model': teacher_model
-        })
-    return teacher_models
-
-
 def train_main():
     # work directory 생성
     work_dir = CFG['WORK_DIR']
@@ -194,13 +139,11 @@ def train_main():
     # hyperparameter 저장
     with open(os.path.join(work_dir, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(CFG, f, indent=4, ensure_ascii=False)
-
+    
     # transform setting 저장
     save_transform(train_transform, os.path.join(work_dir, "train_transform.json"))
     save_transform(val_transform, os.path.join(work_dir, "val_transform.json"))
     
-    # teacher model 정보 가져오기
-    teacher_models = get_teacher_models()
     
     print("Using device:", device)
     print(f"Using model: {CFG['MODEL_NAME']}")
@@ -223,21 +166,6 @@ def train_main():
     class_names = initial_dataset.classes
     num_classes = len(class_names)
     print(f"클래스: {class_names} (총 {num_classes}개)")
-
-    # cutmix or mixup transform settings
-    if CFG['CUTMIX'] and CFG["MIXUP"]:
-        cutmix = v2.CutMix(num_classes=num_classes)
-        mixup = v2.MixUp(num_classes=num_classes)
-        cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
-        print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['CUTMIX']:
-        cutmix_or_mixup = v2.CutMix(num_classes=num_classes)
-        print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['MIXUP']:
-        cutmix_or_mixup = v2.MixUp(num_classes=num_classes)
-        print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    else:
-        cutmix_or_mixup = None
 
     # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
     target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT"]
@@ -275,17 +203,17 @@ def train_main():
         val_loader = DataLoader(val_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=False, num_workers=2, pin_memory=True)
         print(f"Fold {fold_num}: Train images: {len(train_dataset_fold)}, Validation images: {len(val_dataset_fold)}")
 
-        student_model = CustomTimmModel(model_name=CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
+        model = CustomTimmModel(model_name=CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
         model_path = CFG['START_FROM']
         if model_path and os.path.exists(model_path):
-            student_model.load_state_dict(torch.load(model_path, map_location=device))
+            model.load_state_dict(torch.load(model_path, map_location=device))
             print(f"{model_path} 모델을 불러와 해당 체크포인트부터 학습을 재개합니다. CFG를 확인해주세요.")
             print(f"Loaded model from {model_path}")
         else:
             print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
         
         criterion = get_class_from_string(CFG['LOSS']['class'])(**CFG['LOSS']['params'])
-        optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(student_model.parameters(), **CFG['OPTIMIZER']['params'])
+        optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
         scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
 
         best_logloss_fold = float('inf')
@@ -294,14 +222,31 @@ def train_main():
         best_val_loss_for_early_stopping = float('inf')
 
         for epoch in range(CFG['EPOCHS']):
-            student_model.train()
-            for teacher in teacher_models:
-                teacher['model'].eval()
+            model.train()
             train_loss_epoch = 0.0
+            
+            # curriculum learning
+            # cutmix or mixup transform settings
+            train_loader.dataset.transform = get_randaugment_curriculum_transform(epoch, CFG['EPOCHS'], *CFG['RANDAUG_RANGE']) # 에폭이 진행되는 것에 맞춰서 train augmentation 강화
+            alpha = get_alpha(epoch, CFG['EPOCHS'], *CFG['ALPHA_RANGE'])
+            if CFG['CUTMIX'] and CFG["MIXUP"]:
+                cutmix = v2.CutMix(num_classes=num_classes, alpha=alpha)
+                mixup = v2.MixUp(num_classes=num_classes, alpha=alpha)
+                cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
+                print(f"매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요. 현재 ALPHA:{alpha}")
+            elif CFG['CUTMIX']:
+                cutmix_or_mixup = v2.CutMix(num_classes=num_classes, alpha=alpha)
+                print(f"매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요. 현재 ALPHA:{alpha}")
+            elif CFG['MIXUP']:
+                cutmix_or_mixup = v2.MixUp(num_classes=num_classes, alpha=alpha)
+                print(f"매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요. 현재 ALPHA:{alpha}")
+            else:
+                cutmix_or_mixup = None
+            
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
             for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
                 images, labels = images.to(device), labels.to(device)
-
+                
                 if selected_augmentations:
                     choice = random.choice(selected_augmentations)
                 else:
@@ -318,24 +263,16 @@ def train_main():
                 # MOSAIC을 위해 추가
                 if CFG['MOSAIC'] and (choice == 'MOSAIC'):
                     images, labels = apply_mosaic(images, labels, num_classes)
-                
-                # teacher의 logit 뽑아내기
-                teacher_logits = 0.
-                with torch.no_grad():
-                    for teacher in teacher_models:
-                        img_size = teacher['cfg']['IMG_SIZE']
-                        teacher_images = F.interpolate(images, size=(img_size,img_size), mode='bilinear', align_corners=False)
-                        teacher_logits += (teacher['model'](teacher_images) / len(teacher_models))
-                    
+
                 optimizer.zero_grad()
-                outputs = student_model(images)
-                loss = loss_fn_kd(outputs, labels, teacher_logits, params=CFG['KD_PARAMS'])
+                outputs = model(images)
+                loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
                 train_loss_epoch += loss.item()
             avg_train_loss_epoch = train_loss_epoch / len(train_loader)
 
-            student_model.eval()
+            model.eval()
             val_loss_epoch = 0.0
             correct_epoch = 0
             total_epoch = 0
@@ -345,7 +282,7 @@ def train_main():
             with torch.no_grad():
                 for images, labels, img_paths in tqdm(val_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Validation", leave=False):
                     images, labels = images.to(device), labels.to(device)
-                    outputs = student_model(images)
+                    outputs = model(images)
                     loss = criterion(outputs, labels)
                     val_loss_epoch += loss.item()
                     _, preds = torch.max(outputs, 1)
@@ -361,9 +298,22 @@ def train_main():
                     for idx in wrong_indices:
                         path = img_paths[idx]  # 예: 'data/train/cat/image1.jpg'
                         parent_folder = os.path.basename(os.path.dirname(path))  # 예: 'cat'
+
+                        pred = preds[idx]
+                        label = labels[idx]
+
+                        if pred == label:
+                            # 예측은 맞았지만 confidence가 낮음 → 두 번째로 높은 클래스 선택
+                            sorted_probs, sorted_indices = probs[idx].sort(descending=True)
+                            second_best_class = sorted_indices[1].item()
+                            model_answer = class_names[second_best_class]
+                        else:
+                            # 아예 틀린 예측 → 기존대로 예측 결과 사용
+                            model_answer = class_names[pred]
+
                         wrong_img_dict[parent_folder].append({
                             'image_path': path,
-                            'model_answer': class_names[preds[idx]]
+                            'model_answer': model_answer
                         })
                 with open(os.path.join(wrong_save_path, f"Fold_{fold_num}_Epoch_{epoch+1}_wrong_examples.json"), "w", encoding="utf-8") as f:
                     json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
@@ -375,14 +325,14 @@ def train_main():
             if CFG['SCHEDULER']['class'] == 'torch.optim.lr_scheduler.ReduceLROnPlateau':
                 scheduler.step(val_logloss_epoch)
             else:
-                scheduler.step()
+                scheduler.step(epoch)
             current_lr = optimizer.param_groups[0]['lr']
             print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
 
             if val_logloss_epoch < best_logloss_fold:
                 best_logloss_fold = val_logloss_epoch
                 current_fold_best_model_path = os.path.join(work_dir, f'best_model_{CFG["MODEL_NAME"]}_fold{fold_num}.pth')
-                torch.save(student_model.state_dict(), current_fold_best_model_path)
+                torch.save(model.state_dict(), current_fold_best_model_path)
                 print(f"Fold {fold_num} 📦 Best model saved at epoch {epoch+1} (LogLoss: {best_logloss_fold:.4f}) to {current_fold_best_model_path}")
 
             if val_logloss_epoch < best_val_loss_for_early_stopping:
@@ -426,3 +376,7 @@ def train_main():
     print(f"\nOverall Best LogLoss (among executed folds): {overall_best_logloss if overall_best_logloss != float('inf') else 'N/A'}")
     print(f"Path to the overall best model for inference: {overall_best_model_path if overall_best_model_path else 'N/A'}")
     print("Training finished.")
+
+
+if __name__ == '__main__':
+    train_main()

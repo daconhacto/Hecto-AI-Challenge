@@ -7,6 +7,7 @@ import collections.abc
 import albumentations as A
 from torch.utils.data import Sampler
 import random
+import torchvision.transforms.functional as TF
 
 # --- InitialCustomImageDataset (초기 데이터 로드용) ---
 class InitialCustomImageDataset(Dataset):
@@ -177,26 +178,18 @@ class TTATestCustomImageDataset(Dataset):
 
 
 class KDDataset(Dataset):
-    def __init__(self, samples_list, teacher_df, image_size, transform=None, is_train=True):
+    def __init__(self, samples_list, image_size, transform=None, teacher_img_sizes=None):
         self.samples_list = samples_list
         self.transform = transform
-        self.is_train = is_train
         self.image_size = image_size
+        self.teacher_img_sizes = teacher_img_sizes
         self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
-        self.teacher_logits = []
-        for sample in self.samples_list:
-            path, _ = sample
-            teacher_logit = teacher_df[teacher_df["ID"] == path].drop(columns=["ID"]).to_numpy().squeeze()
-            self.teacher_logits.append(teacher_logit)
-
 
     def __len__(self):
         return len(self.samples_list)
 
     def __getitem__(self, idx):
         img_path, label = self.samples_list[idx]
-        teacher_logit = self.teacher_logits[idx]
-
         try:
             image = Image.open(img_path).convert('RGB')
         except FileNotFoundError:
@@ -209,5 +202,6 @@ class KDDataset(Dataset):
             image = self.transform(image=image)['image']
         else:
             image = self.transform(image)
+        teacher_images = [TF.resize(image, size=[teacher_img_size, teacher_img_size]) for teacher_img_size in self.teacher_img_sizes]
 
-        return (image, label, teacher_logit) if self.is_train else (image, label, img_path)
+        return (image, teacher_images, label)

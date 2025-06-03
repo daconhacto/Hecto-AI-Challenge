@@ -11,7 +11,6 @@ import json # class_names 저장을 위해 추가
 from sklearn.model_selection import StratifiedKFold
 import torch
 from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms.functional as TF
 import timm
 import torchvision.transforms as transforms
 from torchvision.transforms import v2
@@ -34,10 +33,9 @@ CFG = {
     "ROOT": '/home/sh/hecto/train', # data_path
     "BATCH_SIZE": 64,
 
-    # 반드시 제공되어야함. 현재 모델이 반드시 workdir 폴더 아래에 위치해 있는 게 보장은 안되는 거 같긴 한데
-    # 일단 settings.json에서 모델명, 이미지 사이즈만 뽑아오는거고, 다른 정보는 사용하진 않아서 괜찮을듯 함
+    # 둘 중 하나는 반드시 제공되어야함
     "TEACHER_MODEL_WORKDIRS": [],
-    "TEACHER_MODEL_PATHS": [], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
+    "TEACHER_CSV_PATH": None,
 
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
     "WRONG_THRESHOLD": 0.7,
@@ -58,12 +56,6 @@ CFG = {
     'EARLY_STOPPING_PATIENCE': 3,
     'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
-    
-    # KD LOSS
-    'KD_PARAMS': {
-        'alpha': 0.7,
-        'temperature': 4.0
-    },
     
     # 새롭게 추가된 logging파트. class의 경우 무조건 풀경로로 적어야합니다. nn.CrossEntropyLoss 처럼 적으면 오류남
     'LOSS': {
@@ -87,42 +79,17 @@ CFG = {
     },
 }
 
-# --- Albumentations 기반 이미지 변환 정의 ---
-resize_transform = [A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE'])]
-augmentation_transform = [
-    A.HorizontalFlip(p=0.5),
-    A.Rotate(limit=15, p=0.5),
-    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
-    A.Affine(translate_percent=(0.1, 0.1), scale=(0.9, 1.1), shear=10, rotate=0, p=0.5),
-    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
-]
-train_transform = A.Compose([
-    resize_transform + augmentation_transform
-])
 
-val_transform = A.Compose([
-    A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
-    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
-])
+def distillation_loss(student_logits, teacher_logits, labels, T=4.0, alpha=0.7):
+    # Soft target loss (KLDiv)
+    soft_teacher = F.log_softmax(teacher_logits / T, dim=1)
+    soft_student = F.log_softmax(student_logits / T, dim=1)
+    loss_soft = F.kl_div(soft_student, soft_teacher, reduction='batchmean') * (T ** 2)
 
+    # Hard target loss (CE)
+    loss_hard = F.cross_entropy(student_logits, labels)
 
-def loss_fn_kd(outputs, labels, teacher_outputs, params):
-    """
-    Compute the knowledge-distillation (KD) loss given outputs, labels.
-    "Hyperparameters": temperature and alpha
-
-    NOTE: the KL Divergence for PyTorch comparing the softmaxs of teacher
-    and student expects the input tensor to be log probabilities! See Issue #2
-    """
-    alpha = params.alpha
-    T = params.temperature
-    KD_loss = nn.KLDivLoss()(F.log_softmax(outputs/T, dim=1),
-                             F.softmax(teacher_outputs/T, dim=1)) * (alpha * T * T) + \
-              F.cross_entropy(outputs, labels) * (1. - alpha)
-
-    return KD_loss
+    return alpha * loss_soft + (1 - alpha) * loss_hard
 
 
 # Model Define (inf.py에서도 사용)
@@ -141,46 +108,149 @@ class CustomTimmModel(nn.Module):
         output = self.head(features)
         return output
 
-
-def get_teacher_models():
+def validate_for_all_train_data(TEACHER_CFG):
+    print("Using device:", device)
+    
     # work_directory
-    teacher_models = []
-    for work_dir, model_path in zip(CFG['TEACHER_MODEL_WORKDIRS'], CFG['TEACHER_MODEL_PATHS']):
-        # 세팅을 위해 teacher model의 CFG 가져오기
+    work_dir = TEACHER_CFG['WORK_DIR']
+    print(f"Inference CFG: {TEACHER_CFG}")
+    seed_everything(TEACHER_CFG['SEED'])
+    
+    # transform 정의
+    val_transform = A.Compose([
+        A.Resize(TEACHER_CFG['IMG_SIZE'], TEACHER_CFG['IMG_SIZE']),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
+
+    # class_names 로드
+    try:
+        with open(os.path.join(work_dir, 'class_names.json'), 'r') as f:
+            class_names = json.load(f)
+    except FileNotFoundError:
+        print("Error: class_names.json not found. Please run train.py first to generate it.")
+        return
+    num_classes = len(class_names)
+    print(f"Loaded class_names: {class_names} (Total: {num_classes})")
+
+
+    # 테스트 데이터셋 및 DataLoader
+    val_root = TEACHER_CFG['ROOT'] # 테스트 데이터 경로
+    initial_dataset = InitialCustomImageDataset(val_root)
+    if not initial_dataset.samples:
+        raise ValueError(f"No images found in {val_root}. Please check the path and data structure.")
+    print(f"총 학습 이미지 수 (K-Fold 대상): {len(initial_dataset.samples)}")
+
+    all_samples = initial_dataset.samples
+    print(f"클래스: {class_names} (총 {num_classes}개)")
+    val_dataset = FoldSpecificDataset(all_samples, image_size=TEACHER_CFG['IMG_SIZE'], transform=val_transform, is_train=False) # train.py의 val_transform과 동일한 것을 사용
+    val_loader = DataLoader(val_dataset, batch_size=TEACHER_CFG['BATCH_SIZE'], shuffle=False, num_workers=2, pin_memory=True)
+
+    # 모델 로드
+    model = CustomTimmModel(model_name=TEACHER_CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
+    
+    model_path = find_first_file_by_extension(work_dir)
+    if not os.path.exists(model_path):
+        print(f"Error: Model file {model_path} not found. Please check the path in CFG_INF['MODEL_PATH'].")
+        print("You might need to run train.py first or update the path to the desired .pth file.")
+        return
+        
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"Loaded model from {model_path}")
+    except Exception as e:
+        print(f"Error loading model state_dict from {model_path}: {e}")
+        print("Ensure the model architecture in train.py (CustomTimmModel) matches the saved model.")
+        return
+    
+    # val_loss 계산을 위해 선언
+    criterion = nn.CrossEntropyLoss()
+
+    model.eval()
+    num_corrects = 0
+    total_loss = 0.0
+    total_samples = 0
+    all_probs_epoch = []
+    all_logits_epoch = []
+    all_labels_epoch = []
+    all_img_paths = []
+    wrong_img_dict = defaultdict(list)
+
+    with torch.no_grad():
+        pbar = tqdm(val_loader, desc="Inference")
+        for images, labels, img_paths in pbar:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+            batch_size = labels.size(0)
+            total_loss += loss.item() * batch_size
+            total_samples += batch_size
+
+            _, preds = torch.max(outputs, 1)
+            num_corrects += (preds == labels).sum().item()
+            probs = F.softmax(outputs, dim=1)
+            all_logits_epoch.extend(outputs.cpu().numpy())
+            all_probs_epoch.extend(probs.cpu().numpy())
+            all_labels_epoch.extend(labels.cpu().numpy())
+            all_img_paths.extend(img_paths)
+
+            avg_loss = total_loss / total_samples
+            avg_acc = num_corrects / total_samples * 100
+
+            pbar.set_postfix({
+                "Avg Loss": f"{avg_loss:.4f}",
+                "Avg Acc": f"{avg_acc:.2f}%"
+            })
+            # === 틀린 예측 탐색 ===
+            wrong_indices = (preds != labels).nonzero(as_tuple=True)[0]  # 틀린 인덱스만 추출
+            for idx in wrong_indices:
+                path = img_paths[idx]  # 예: 'data/train/cat/image1.jpg'
+                parent_folder = os.path.basename(os.path.dirname(path))  # 예: 'cat'
+                wrong_img_dict[parent_folder].append({
+                    'image_path': path,
+                    'model_answer': class_names[preds[idx]]
+                })
+    print(f"Loss : {(total_loss / total_samples):.4f}")
+    print(f"accuracy : {(num_corrects / total_samples * 100):.4f}")
+    print(f"log loss : {log_loss(all_labels_epoch, all_probs_epoch, labels=list(range(num_classes))):.4f}")
+    # 최종 DataFrame 생성
+    df = pd.DataFrame(all_logits_epoch, columns=class_names)
+    df.insert(0, "ID", all_img_paths)
+    output_submission_filename = os.path.join(work_dir, 'train_logits.csv')
+    df.to_csv(output_submission_filename, index=False, encoding='utf-8-sig')
+
+    with open(os.path.join(work_dir, "all_wrong_examples.json"), "w", encoding="utf-8") as f:
+        json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
+    return df
+
+
+def extract_logits_from_teachers():
+    # work_directory
+    dfs = []
+    for work_dir in CFG['TEACHER_MODEL_WORKDIRS']:
+        # 몇몇 세팅 통일을 위해 train CFG 가져오기
         with open(os.path.join(work_dir, "settings.json"), "r") as f:
             TEACHER_CFG = json.load(f)
-            
-        # class_names 로드
-        try:
-            with open(os.path.join(work_dir, 'class_names.json'), 'r') as f:
-                class_names = json.load(f)
-        except FileNotFoundError:
-            print("Error: class_names.json not found. Please run train.py first to generate it.")
-            return
-        num_classes = len(class_names)
-        print(f"Loaded class_names: {class_names} (Total: {num_classes})")
-        
-        # load model
-        teacher_model = CustomTimmModel(model_name=TEACHER_CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
-        
-        if not os.path.exists(model_path):
-            print(f"Error: Model file {model_path} not found. Please check the path in CFG_INF['MODEL_PATH'].")
-            print("You might need to run train.py first or update the path to the desired .pth file.")
-            return
-            
-        try:
-            teacher_model.load_state_dict(torch.load(model_path, map_location=device))
-            print(f"Loaded model from {model_path}")
-        except Exception as e:
-            print(f"Error loading model state_dict from {model_path}: {e}")
-            print("Ensure the model architecture in train.py (CustomTimmModel) matches the saved model.")
-            return
-        
-        teacher_models.append({
-            'cfg': TEACHER_CFG,
-            'model': teacher_model
-        })
-    return teacher_models
+        dfs.append(validate_for_all_train_data(TEACHER_CFG))
+        torch.cuda.empty_cache()
+        gc.collect()
+    
+    # ID 열 기준 정렬 (정렬이 안 맞으면 결과가 틀어질 수 있음)
+    dfs = [df.sort_values("ID").reset_index(drop=True) for df in dfs]
+    
+    # ID 열은 동일하다고 가정, 하나만 가져오면 됨
+    id_col = dfs[0]["ID"]
+    
+    # 클래스 확률 부분만 평균 (ID 열 제외)
+    class_probs = [df.drop(columns=["ID"]) for df in dfs]
+    avg_probs = sum(class_probs) / len(class_probs)
+
+    # ID 열 다시 붙이기
+    ensemble_df = pd.concat([id_col, avg_probs], axis=1)
+    output_submission_filename = os.path.join(work_dir, 'ensemble_train_logits.csv')
+    ensemble_df.to_csv(output_submission_filename, index=False, encoding='utf-8-sig')
+    return ensemble_df
 
 
 def train_main():
@@ -194,13 +264,35 @@ def train_main():
     # hyperparameter 저장
     with open(os.path.join(work_dir, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(CFG, f, indent=4, ensure_ascii=False)
+    
+    # teacher logit dataframe 가져오기
+    if CFG['TEACHER_CSV_PATH']:
+        teacher_logits_df = pd.read_csv(CFG['TEACHER_CSV_PATH'])
+    else:
+        teacher_logits_df = extract_logits_from_teachers()
+    
+
+    # --- Albumentations 기반 이미지 변환 정의 ---
+    train_transform = A.Compose([
+        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
+        A.HorizontalFlip(p=0.5),
+        A.Rotate(limit=15, p=0.5),
+        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
+        A.Affine(translate_percent=(0.1, 0.1), scale=(0.9, 1.1), shear=10, rotate=0, p=0.5),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
+
+    val_transform = A.Compose([
+        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
 
     # transform setting 저장
     save_transform(train_transform, os.path.join(work_dir, "train_transform.json"))
     save_transform(val_transform, os.path.join(work_dir, "val_transform.json"))
     
-    # teacher model 정보 가져오기
-    teacher_models = get_teacher_models()
     
     print("Using device:", device)
     print(f"Using model: {CFG['MODEL_NAME']}")
@@ -269,23 +361,23 @@ def train_main():
 
         train_samples_fold = [all_samples[i] for i in train_indices]
         val_samples_fold = [all_samples[i] for i in val_indices]
-        train_dataset_fold = FoldSpecificDataset(train_samples_fold, image_size = CFG['IMG_SIZE'], transform=train_transform)
+        train_dataset_fold = KDDataset(train_samples_fold, teacher_df=teacher_logits_df, image_size = CFG['IMG_SIZE'], transform=train_transform)
         val_dataset_fold = FoldSpecificDataset(val_samples_fold, image_size = CFG['IMG_SIZE'], transform=val_transform, is_train=False)
         train_loader = DataLoader(train_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=True, num_workers=2, pin_memory=True)
         val_loader = DataLoader(val_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=False, num_workers=2, pin_memory=True)
         print(f"Fold {fold_num}: Train images: {len(train_dataset_fold)}, Validation images: {len(val_dataset_fold)}")
 
-        student_model = CustomTimmModel(model_name=CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
+        model = CustomTimmModel(model_name=CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
         model_path = CFG['START_FROM']
         if model_path and os.path.exists(model_path):
-            student_model.load_state_dict(torch.load(model_path, map_location=device))
+            model.load_state_dict(torch.load(model_path, map_location=device))
             print(f"{model_path} 모델을 불러와 해당 체크포인트부터 학습을 재개합니다. CFG를 확인해주세요.")
             print(f"Loaded model from {model_path}")
         else:
             print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
         
         criterion = get_class_from_string(CFG['LOSS']['class'])(**CFG['LOSS']['params'])
-        optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(student_model.parameters(), **CFG['OPTIMIZER']['params'])
+        optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
         scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
 
         best_logloss_fold = float('inf')
@@ -294,13 +386,11 @@ def train_main():
         best_val_loss_for_early_stopping = float('inf')
 
         for epoch in range(CFG['EPOCHS']):
-            student_model.train()
-            for teacher in teacher_models:
-                teacher['model'].eval()
+            model.train()
             train_loss_epoch = 0.0
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
-            for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
-                images, labels = images.to(device), labels.to(device)
+            for images, labels, teacher_logits in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
+                images, labels, teacher_logits = images.to(device), labels.to(device), teacher_logits.to(device)
 
                 if selected_augmentations:
                     choice = random.choice(selected_augmentations)
@@ -311,31 +401,23 @@ def train_main():
                 if CFG['CUTOUT'] and choice == 'CUTOUT':
                     images = apply_cutout(images, mask_size = 64)
                 
-                # cutmix mixup을 위해 추가
-                if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
-                    images, labels = cutmix_or_mixup(images, labels)
+                # # cutmix mixup을 위해 추가
+                # if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
+                #     images, labels = cutmix_or_mixup(images, labels)
                 
-                # MOSAIC을 위해 추가
-                if CFG['MOSAIC'] and (choice == 'MOSAIC'):
-                    images, labels = apply_mosaic(images, labels, num_classes)
-                
-                # teacher의 logit 뽑아내기
-                teacher_logits = 0.
-                with torch.no_grad():
-                    for teacher in teacher_models:
-                        img_size = teacher['cfg']['IMG_SIZE']
-                        teacher_images = F.interpolate(images, size=(img_size,img_size), mode='bilinear', align_corners=False)
-                        teacher_logits += (teacher['model'](teacher_images) / len(teacher_models))
-                    
+                # # MOSAIC을 위해 추가
+                # if CFG['MOSAIC'] and (choice == 'MOSAIC'):
+                #     images, labels = apply_mosaic(images, labels, num_classes)
+
                 optimizer.zero_grad()
-                outputs = student_model(images)
-                loss = loss_fn_kd(outputs, labels, teacher_logits, params=CFG['KD_PARAMS'])
+                outputs = model(images)
+                loss = distillation_loss(outputs, teacher_logits, labels)
                 loss.backward()
                 optimizer.step()
                 train_loss_epoch += loss.item()
             avg_train_loss_epoch = train_loss_epoch / len(train_loader)
 
-            student_model.eval()
+            model.eval()
             val_loss_epoch = 0.0
             correct_epoch = 0
             total_epoch = 0
@@ -345,7 +427,7 @@ def train_main():
             with torch.no_grad():
                 for images, labels, img_paths in tqdm(val_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Validation", leave=False):
                     images, labels = images.to(device), labels.to(device)
-                    outputs = student_model(images)
+                    outputs = model(images)
                     loss = criterion(outputs, labels)
                     val_loss_epoch += loss.item()
                     _, preds = torch.max(outputs, 1)
@@ -382,7 +464,7 @@ def train_main():
             if val_logloss_epoch < best_logloss_fold:
                 best_logloss_fold = val_logloss_epoch
                 current_fold_best_model_path = os.path.join(work_dir, f'best_model_{CFG["MODEL_NAME"]}_fold{fold_num}.pth')
-                torch.save(student_model.state_dict(), current_fold_best_model_path)
+                torch.save(model.state_dict(), current_fold_best_model_path)
                 print(f"Fold {fold_num} 📦 Best model saved at epoch {epoch+1} (LogLoss: {best_logloss_fold:.4f}) to {current_fold_best_model_path}")
 
             if val_logloss_epoch < best_val_loss_for_early_stopping:
