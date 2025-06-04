@@ -439,9 +439,12 @@ def half_crop(image, mode=None):
         return image  # no crop
 
 class CustomCropTransform:
-    def __init__(self, mode=None):
+    def __init__(self, p=1.0, mode=None):
         self.mode = mode
+        self.p = p
 
     def __call__(self, image, **kwargs):
         mode = self.mode if self.mode else random.choice(['top', 'bottom', 'left', 'right'])
+        if random.random() < self.p:
+            return image
         return half_crop(image, mode)
