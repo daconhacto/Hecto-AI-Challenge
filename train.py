@@ -1,5 +1,3 @@
-# train.py하고 크게 다를 건 없으나 Albumentation을 적용해보기 위해 작성한 .py파일입니다.
-
 import os
 import sys
 import json
