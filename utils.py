@@ -137,10 +137,10 @@ def find_class_groups_from_jsons(folder_path, start_epoch = 10):
 
     return groups
 
-def get_total_wrong_groups(work_dir, start_epoch):
+def get_total_wrong_groups(work_dir, start_epoch, fold):
     wrong_examples = os.path.join(work_dir, 'wrong_examples')
     groups = find_class_groups_from_jsons(wrong_examples, start_epoch)
-    with open(os.path.join(work_dir, 'groups.json'), 'w') as f:
+    with open(os.path.join(work_dir, f'fold{fold}_groups.json'), 'w') as f:
         json.dump(groups, f)
     print(f'total wrong group saved to {os.path.join(work_dir, "groups.json")}')
 

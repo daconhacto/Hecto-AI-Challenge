@@ -344,7 +344,9 @@ def train_main():
             overall_best_logloss = best_logloss_fold
             overall_best_model_path = current_fold_best_model_path
             print(f"🌟 New Overall Best Model from Fold {fold_num} (LogLoss: {overall_best_logloss:.4f}, Path: {overall_best_model_path})")
-
+        # 전체 틀린 그룹을 저장
+        get_total_wrong_groups(work_dir, CFG['GROUP_JSON_START_EPOCH'], fold_num)
+        
     print("\n===== K-Fold Cross Validation Summary =====")
     # ... (결과 요약 부분은 동일하게 유지)
     total_logloss_sum = 0
@@ -371,9 +373,6 @@ def train_main():
     print(f"\nOverall Best LogLoss (among executed folds): {overall_best_logloss if overall_best_logloss != float('inf') else 'N/A'}")
     print(f"Path to the overall best model for inference: {overall_best_model_path if overall_best_model_path else 'N/A'}")
     print("Training finished.")
-
-    # 전체 틀린 그룹을 저장
-    get_total_wrong_groups(work_dir, CFG['GROUP_JSON_START_EPOCH'])
 
 
 if __name__ == '__main__':
