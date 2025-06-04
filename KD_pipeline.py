@@ -115,21 +115,19 @@ CFG = {
 }
 
 # --- Albumentations 기반 이미지 변환 정의 ---
-resize_transform = [A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE'])]
-augmentation_transform = [
+CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
+train_transform = A.Compose([
+    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
     A.HorizontalFlip(p=0.5),
     A.Rotate(limit=15, p=0.5),
     A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
     A.Affine(translate_percent=(0.1, 0.1), scale=(0.9, 1.1), shear=10, rotate=0, p=0.5),
     A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ToTensorV2()
-]
-train_transform = A.Compose(
-    resize_transform + augmentation_transform
-)
+])
 
 val_transform = A.Compose([
-    A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
+    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
     A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ToTensorV2()
 ])
