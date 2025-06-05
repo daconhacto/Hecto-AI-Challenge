@@ -7,6 +7,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import torchvision.transforms as transforms
 from collections import defaultdict
+from typing import Tuple
 
 
 def get_default_train_transform_albu(img_size):
@@ -233,7 +234,86 @@ class SaliencyMix:
             new_labels[i] = labels[i] * lam_i + shuffled_labels[i] * (1 - lam_i)
 
         return new_images, new_labels
-    
+
+
+def saliencymix(
+    images: torch.Tensor,
+    labels: torch.Tensor,
+    num_classes: int,
+    alpha: float = 1.0,
+    num_candidates: int = 32
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    SaliencyMix augmentation.
+
+    Args:
+        images: [B, C, H, W], float32, 0~1 스케일
+        labels: [B] (int) or [B, num_classes] (one-hot float)
+        num_classes: 클래스 수
+        alpha: Beta 분포 파라미터
+        num_candidates: saliency 기반 후보 창 개수
+
+    Returns:
+        mixed_images: [B, C, H, W]
+        mixed_labels: [B, num_classes] (soft labels)
+    """
+    B, C, H, W = images.shape
+    device = images.device
+
+    # 1) λ 샘플링 및 patch 크기 계산
+    lam = np.random.beta(alpha, alpha)
+    cut_rat = np.sqrt(1 - lam)
+    ph = int(H * cut_rat)
+    pw = int(W * cut_rat)
+
+    # 2) 레이블을 one-hot float32 로
+    if labels.dim() == 1:
+        labels_onehot = F.one_hot(labels, num_classes=num_classes).float().to(device)
+    else:
+        labels_onehot = labels.float().to(device)
+
+    mixed_images = images.clone()
+    mixed_labels = labels_onehot.clone()
+
+    # 3) Sobel 커널 정의 (grayscale → saliency)
+    sobel_x = torch.tensor([[-1,0,1],[-2,0,2],[-1,0,1]],
+                           dtype=torch.float32, device=device).view(1,1,3,3)
+    sobel_y = torch.tensor([[-1,-2,-1],[0,0,0],[1,2,1]],
+                           dtype=torch.float32, device=device).view(1,1,3,3)
+
+    # 4) 각 이미지마다 mix 수행
+    for i in range(B):
+        # a) 랜덤 대조 이미지 선택 (i 제외)
+        j = random.choice([x for x in range(B) if x != i])
+
+        # b) grayscale → sobel → saliency map
+        gray = images[j].mean(dim=0, keepdim=True).unsqueeze(0)  # [1,1,H,W]
+        gx = F.conv2d(gray, sobel_x, padding=1)
+        gy = F.conv2d(gray, sobel_y, padding=1)
+        sal_map = (gx.abs() + gy.abs()).squeeze(0).squeeze(0)    # [H,W]
+
+        # c) 후보 위치 중 saliency 합 최대인 박스 찾기
+        best_score = -1
+        best_y, best_x = 0, 0
+        for _ in range(num_candidates):
+            y = np.random.randint(0, H - ph + 1)
+            x = np.random.randint(0, W - pw + 1)
+            score = float(sal_map[y:y+ph, x:x+pw].sum().item())
+            if score > best_score:
+                best_score = score
+                best_y, best_x = y, x
+
+        # d) 이미지 patch 교체
+        mixed_images[i, :, best_y:best_y+ph, best_x:best_x+pw] = images[j, :, best_y:best_y+ph, best_x:best_x+pw]
+
+        # e) 레이블 믹싱 (면적 비율)
+        area = ph * pw
+        lam_adjusted = 1.0 - (area / (H * W))
+        mixed_labels[i] = labels_onehot[i] * lam_adjusted + labels_onehot[j] * (1.0 - lam_adjusted)
+
+    return mixed_images, mixed_labels
+
+
 def half_mosaic(images, labels, class_names, similarity_map, num_classes, orientation='horizontal'):
 
     """

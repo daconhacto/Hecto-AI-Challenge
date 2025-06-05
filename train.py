@@ -42,8 +42,12 @@ CFG = {
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "CUTMIX": {
-        'enable': True,
+        'enable': False,
         'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+    },
+    "SALIENCYMIX": {
+        'enable': True,
+        'params':{'alpha':1.0, 'num_candidates':9}
     },
     "MIXUP": {
         'enable': True,
@@ -99,18 +103,22 @@ CFG = {
 }
 
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
-# 이미지 변환 정의 Albumentation하고 torchvision 어느 라이브러리를 활용하든 상관없이 적용 가능
-train_transform = transforms.Compose([
-    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
-    v2.AugMix(severity=4),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+# --- Albumentations 기반 이미지 변환 정의 ---
+train_transform = A.Compose([
+    A.Lambda(name='half_crop', image=CustomCropTransform()),
+    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
+    A.HorizontalFlip(p=0.5),
+    A.Rotate(limit=15, p=0.5),
+    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
+    A.Affine(translate_percent=(0.1, 0.1), scale=(0.9, 1.1), shear=10, rotate=0, p=0.5),
+    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ToTensorV2()
 ])
 
-val_transform = transforms.Compose([ # inf.py의 test_transform과 동일해야 함
-    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+val_transform = A.Compose([
+    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
+    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ToTensorV2()
 ])
 
 
@@ -169,7 +177,7 @@ def train_main():
         cutmix_or_mixup = None
 
     # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
-    target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT"]
+    target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"]
     selected_augmentations = [i for i in target_augmentations if CFG[i]]
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
@@ -257,6 +265,10 @@ def train_main():
                 # MOSAIC을 위해 추가
                 if CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
                     images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
+                
+                # SaliencyMix를 위해 추가
+                if choice == 'SALIENCYMIX' and CFG['SALIENCYMIX']:
+                    images, labels = saliencymix(images, labels, num_classes, **CFG['SALIENCYMIX']['params'])
 
                 optimizer.zero_grad()
                 outputs = model(images)
