@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import pprint
 import random
 import pandas as pd
 import numpy as np
@@ -147,6 +148,9 @@ def train_main():
     # hyperparameter 저장
     with open(os.path.join(work_dir, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(CFG, f, indent=4, ensure_ascii=False)
+    with open(os.path.join(work_dir, "CFG.py"), "w") as f:
+        f.write("CFG = ")
+        pprint.pprint(CFG, stream=f)
     
     # transform setting 저장
     save_transform(train_transform, os.path.join(work_dir, "train_transform.json"))
