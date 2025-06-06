@@ -35,6 +35,10 @@ def inference_main():
     filtered_data = {k: v for k, v in TRAIN_CFG.items() if k not in CFG_INF.keys()}
     CFG_INF.update(filtered_data)
 
+
+    if len(CFG_INF['IMG_SIZE']) == 2:
+        CFG_INF['IMG_SIZE'] = tuple(CFG_INF['IMG_SIZE'])
+    CFG_INF['IMG_SIZE'] = CFG_INF['IMG_SIZE'] if isinstance(CFG_INF['IMG_SIZE'], tuple) else (CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])
     # 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
     tta_transform = transforms.Compose([
         transforms.RandomResizedCrop(size=CFG_INF['IMG_SIZE'], scale=(0.25, 1.0), ratio=(2/3, 5/3), interpolation=transforms.InterpolationMode.BICUBIC),

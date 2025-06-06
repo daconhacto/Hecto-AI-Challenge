@@ -41,9 +41,10 @@ def validate_for_all_train_data():
     filtered_data = {k: v for k, v in TRAIN_CFG.items() if k not in CFG.keys()}
     CFG.update(filtered_data)
     print(f"Inference CFG: {CFG}")
+
+    if len(CFG['IMG_SIZE']) == 2:
+        CFG['IMG_SIZE'] = tuple(CFG['IMG_SIZE'])
     CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
-    seed_everything(CFG['SEED'])
-    
     # transform 정의
     val_transform = A.Compose([
         A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
@@ -51,6 +52,8 @@ def validate_for_all_train_data():
         ToTensorV2()
     ])
 
+    
+    seed_everything(CFG['SEED'])
     # class_names 로드
     try:
         with open(os.path.join(work_dir, 'class_names.json'), 'r') as f:

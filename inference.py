@@ -34,8 +34,10 @@ def inference_main():
     # 제외한 데이터만 업데이트
     filtered_data = {k: v for k, v in TRAIN_CFG.items() if k not in CFG_INF.keys()}
     CFG_INF.update(filtered_data)
+
+    if len(CFG_INF['IMG_SIZE']) == 2:
+        CFG_INF['IMG_SIZE'] = tuple(CFG_INF['IMG_SIZE'])
     CFG_INF['IMG_SIZE'] = CFG_INF['IMG_SIZE'] if isinstance(CFG_INF['IMG_SIZE'], tuple) else (CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])
-    
     # transform 정의
     test_transform = A.Compose([
         A.Resize(CFG_INF['IMG_SIZE'][0], CFG_INF['IMG_SIZE'][1]),
