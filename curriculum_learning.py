@@ -38,8 +38,19 @@ CFG = {
     "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
-    "CUTMIX": True,
-    "MIXUP":  True,
+    "NONE_AUGMENTATION_LIST": ["NONE", "NONE"],
+    "CUTMIX": {
+        'enable': True,
+        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+    },
+    "SALIENCYMIX": {
+        'enable': False,
+        'params':{'alpha':1.0, 'num_candidates':9}
+    },
+    "MIXUP": {
+        'enable': True,
+        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+    },
     "MOSAIC": {
         'enable': True,
         'params':{
@@ -165,8 +176,8 @@ def train_main():
     print(f"클래스: {class_names} (총 {num_classes}개)")
 
     # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
-    target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT"]
-    selected_augmentations = [i for i in target_augmentations if CFG[i]]
+    target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"]
+    selected_augmentations = [i for i in target_augmentations if CFG[i]['enable']] + CFG['NONE_AUGMENTATION_LIST']
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
     wrong_save_path = os.path.join(work_dir, "wrong_examples")
@@ -246,6 +257,8 @@ def train_main():
                 
                 if selected_augmentations:
                     choice = random.choice(selected_augmentations)
+                    if choice == "NONE":
+                        choice = None
                 else:
                     choice = None
                     
@@ -260,6 +273,10 @@ def train_main():
                 # MOSAIC을 위해 추가
                 if CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
                     images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
+                
+                # SaliencyMix를 위해 추가
+                if choice == 'SALIENCYMIX' and CFG['SALIENCYMIX']['enable']:
+                    images, labels = saliencymix(images, labels, num_classes, **CFG['SALIENCYMIX']['params'])
 
                 optimizer.zero_grad()
                 outputs = model(images)
