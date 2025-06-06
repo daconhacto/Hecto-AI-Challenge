@@ -29,8 +29,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/train',
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/logging_test',
+    "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto_dataset_test/train_original',
+    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/june_code_latest_version/work_dir/convnext_1084_5fold_training',
 
     # retraining 설정
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
@@ -41,12 +41,13 @@ CFG = {
     "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
+    "NONE_AUGMENTATION_LIST": ["NONE", "NONE"],
     "CUTMIX": {
-        'enable': False,
+        'enable': True,
         'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
     },
     "SALIENCYMIX": {
-        'enable': True,
+        'enable': False,
         'params':{'alpha':1.0, 'num_candidates':9}
     },
     "MIXUP": {
@@ -69,14 +70,14 @@ CFG = {
     },
 
     # 기타 설정값들
-    'IMG_SIZE': 448, # Number or Tuple(Height, Width)
+    'IMG_SIZE': 640, # Number or Tuple(Height, Width)
     'BATCH_SIZE': 32, # 학습 시 배치 크기
-    'EPOCHS': 25,
+    'EPOCHS': 35,
     'SEED' : 42,
     'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
     'N_FOLDS': 5,
     'EARLY_STOPPING_PATIENCE': 3,
-    'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
+    'RUN_SINGLE_FOLD': False,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
     
 
@@ -93,11 +94,10 @@ CFG = {
         }
     },
     'SCHEDULER': {
-        'class': 'torch.optim.lr_scheduler.ReduceLROnPlateau',
+        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
         'params': {
-            'mode': 'min',
-            'factor': 0.1,
-            'patience':2
+            'T_max': 35,
+            'eta_min': 1e-6
         }
     },
 }
@@ -105,7 +105,7 @@ CFG = {
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
 # --- Albumentations 기반 이미지 변환 정의 ---
 train_transform = A.Compose([
-    A.Lambda(name='half_crop', image=CustomCropTransform()),
+    A.Lambda(name='half_crop', image=CustomCropTransform(p=0.5)),
     A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
     A.HorizontalFlip(p=0.5),
     A.Rotate(limit=15, p=0.5),
@@ -178,7 +178,7 @@ def train_main():
 
     # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
     target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"]
-    selected_augmentations = [i for i in target_augmentations if CFG[i]]
+    selected_augmentations = [i for i in target_augmentations if CFG[i]] + CFG['NONE_AUGMENTATION_LIST']
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
     wrong_save_path = os.path.join(work_dir, "wrong_examples")
@@ -251,6 +251,8 @@ def train_main():
 
                 if selected_augmentations:
                     choice = random.choice(selected_augmentations)
+                    if choice == "NONE":
+                        choice = None
                 else:
                     choice = None
                     
