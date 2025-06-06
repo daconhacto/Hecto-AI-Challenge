@@ -255,7 +255,7 @@ def train_main():
 
     # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
     target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"]
-    selected_augmentations = [i for i in target_augmentations if CFG[i]] + CFG['NONE_AUGMENTATION_LIST']
+    selected_augmentations = [i for i in target_augmentations if CFG[i]['enable']] + CFG['NONE_AUGMENTATION_LIST']
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
     wrong_save_path = os.path.join(work_dir, "wrong_examples")
@@ -339,7 +339,7 @@ def train_main():
                     images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
                 
                 # SaliencyMix를 위해 추가
-                if choice == 'SALIENCYMIX' and CFG['SALIENCYMIX']:
+                if choice == 'SALIENCYMIX' and CFG['SALIENCYMIX']['enable']:
                     images, labels = saliencymix(images, labels, num_classes, **CFG['SALIENCYMIX']['params'])
                 
                 # teacher의 logit 뽑아내기
