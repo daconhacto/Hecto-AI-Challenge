@@ -237,17 +237,17 @@ def train_main():
             # cutmix or mixup transform settings
             train_loader.dataset.transform = get_randaugment_curriculum_transform(epoch, CFG['EPOCHS'], *CFG['RANDAUG_RANGE']) # 에폭이 진행되는 것에 맞춰서 train augmentation 강화
             alpha = get_alpha(epoch, CFG['EPOCHS'], *CFG['ALPHA_RANGE'])
-            if CFG['CUTMIX'] and CFG["MIXUP"]:
-                cutmix = v2.CutMix(num_classes=num_classes, alpha=alpha)
-                mixup = v2.MixUp(num_classes=num_classes, alpha=alpha)
+            if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
+                cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+                mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
                 cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
-                print(f"매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요. 현재 ALPHA:{alpha}")
-            elif CFG['CUTMIX']:
-                cutmix_or_mixup = v2.CutMix(num_classes=num_classes, alpha=alpha)
-                print(f"매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요. 현재 ALPHA:{alpha}")
-            elif CFG['MIXUP']:
-                cutmix_or_mixup = v2.MixUp(num_classes=num_classes, alpha=alpha)
-                print(f"매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요. 현재 ALPHA:{alpha}")
+                print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
+            elif CFG['CUTMIX']['enable']:
+                cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+                print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
+            elif CFG["MIXUP"]['enable']:
+                cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
+                print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
             else:
                 cutmix_or_mixup = None
             
