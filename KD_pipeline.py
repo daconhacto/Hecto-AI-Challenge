@@ -31,22 +31,24 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/kd_test', # train.py로 생성된 work_directory
+    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/kd_test_4', # train.py로 생성된 work_directory
     "ROOT": '/home/sh/hecto/hecto_datasets/train_v1+v3', # data_path
     "START_FROM": None,
 
     # 반드시 제공되어야함. 현재 모델이 반드시 workdir 폴더 아래에 위치해 있는 게 보장은 안되는 거 같긴 한데
     # 일단 settings.json에서 모델명, 이미지 사이즈만 뽑아오는거고, 다른 정보는 사용하진 않아서 괜찮을듯 함
     "TEACHER_MODEL_WORKDIRS": [
-        '/home/sh/hecto/best_ensemble_models_1/convnext(1214)',
-        '/home/sh/hecto/best_ensemble_models_1/maxvit(1167)',
-        '/home/sh/hecto/best_ensemble_models_1/resnet101(1573)'
+        '/home/sh/hecto/best_ensemble_models_2/eva_mosaic_half',
+        '/home/sh/hecto/best_ensemble_models_2/Mosaic_test'
     ],
     "TEACHER_MODEL_PATHS": [
-        '/home/sh/hecto/best_ensemble_models_1/convnext(1214)/best_model_convnext_base(1214).pth',
-        '/home/sh/hecto/best_ensemble_models_1/maxvit(1167)/best_model_maxvit_base(1167).pth',
-        '/home/sh/hecto/best_ensemble_models_1/resnet101(1573)/best_model_resnet101_fold1(1573).pth'
+        '/home/sh/hecto/best_ensemble_models_2/eva_mosaic_half/best_model_eva02_large_patch14_448.mim_m38m_ft_in1k_fold1.pth',
+        '/home/sh/hecto/best_ensemble_models_2/Mosaic_test/1089.pth'
     ], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
+    "TEACHER_VAL_LOSSES": [
+        0.0567,
+        0.0553
+    ],
 
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
     "WRONG_THRESHOLD": 0.7,
@@ -64,7 +66,7 @@ CFG = {
     "MOSAIC": {
         'enable': True,
         'params':{
-            'p': 1.0,
+            'p': 0.5,
             'grid_size': 2,
             'use_saliency': True
         }
@@ -78,7 +80,7 @@ CFG = {
 
     'IMG_SIZE': 512,
     'BATCH_SIZE': 32, # 학습 시 배치 크기
-    'EPOCHS': 25,
+    'EPOCHS': 30,
     'SEED' : 42,
     'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
     'N_FOLDS': 5,
@@ -105,11 +107,10 @@ CFG = {
         }
     },
     'SCHEDULER': {
-        'class': 'torch.optim.lr_scheduler.ReduceLROnPlateau',
+        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
         'params': {
-            'mode': 'min',
-            'factor': 0.1,
-            'patience':2
+            'T_max': 30,
+            'eta_min': 1e-7
         }
     },
 }
@@ -267,6 +268,9 @@ def train_main():
     overall_best_model_path = ""
     fold_results = []
 
+    # teacher score 정규화
+    teacher_model_scores = [1/x if x != 0 else 0 for x in CFG['TEACHER_VAL_LOSSES']]
+    teacher_model_weights = [x / sum(teacher_model_scores) for x in teacher_model_scores]
     for fold_idx, (train_indices, val_indices) in enumerate(skf.split(all_samples, targets)):
         fold_num = fold_idx + 1
         if CFG['RUN_SINGLE_FOLD'] and fold_num != CFG['TARGET_FOLD']:
@@ -330,10 +334,10 @@ def train_main():
                 # teacher의 logit 뽑아내기
                 teacher_logits = 0.
                 with torch.no_grad():
-                    for teacher in teacher_models:
+                    for teacher_idx, teacher in enumerate(teacher_models):
                         img_size = teacher['cfg']['IMG_SIZE'] if isinstance(teacher['cfg']['IMG_SIZE'], tuple) else (teacher['cfg']['IMG_SIZE'], teacher['cfg']['IMG_SIZE'])
                         teacher_images = F.interpolate(images, size=img_size, mode='bilinear', align_corners=False)
-                        teacher_logits += (teacher['model'](teacher_images) / len(teacher_models))
+                        teacher_logits += (teacher['model'](teacher_images) * teacher_model_weights[teacher_idx])
                     
                 optimizer.zero_grad()
                 outputs = student_model(images)
