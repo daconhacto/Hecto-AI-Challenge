@@ -530,6 +530,30 @@ class CustomCropTransform:
             return image
         return half_crop(image, mode)
 
+# CustomCropTransform에서 이미지 비율에 따라 위/아래, 왼/옆 자르기 모드를 나누는 클래스
+# 성능이 더 좋으면 이걸로 통합 예정 ㅇㅇ
+class CustomCropTransformConsiderRatio:
+    def __init__(self, p=1.0, mode=None):
+        self.mode = mode
+        self.p = p
+
+    def __call__(self, image, **kwargs):
+        if random.random() >= self.p:
+            return image
+
+        h, w = image.shape[:2]
+        if self.mode:
+            mode = self.mode
+        else:
+            if h > w:
+                mode = random.choice(['top', 'bottom'])
+            elif w > h:
+                mode = random.choice(['left', 'right'])
+            else:
+                mode = random.choice(['top', 'bottom', 'left', 'right'])
+
+        return half_crop(image, mode)
+
 
 def mosaic_selector(
     images, labels, 
