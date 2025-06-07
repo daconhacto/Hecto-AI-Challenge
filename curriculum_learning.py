@@ -40,32 +40,16 @@ CFG = {
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "NONE_AUGMENTATION_LIST": ["NONE", "NONE"],
-    "CUTMIX": {
-        'enable': True,
-        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
+    "CUTMIX": True,
+    "SALIENCYMIX": False,
+    "MIXUP": True,
+    "MOSAIC": True,
+    'MOSAIC_PARAMS':{
+        'p': 1.0,
+        'grid_size': 2,
+        'use_saliency': True
     },
-    "SALIENCYMIX": {
-        'enable': False,
-        'params':{'alpha':1.0, 'num_candidates':9}
-    },
-    "MIXUP": {
-        'enable': True,
-        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
-    },
-    "MOSAIC": {
-        'enable': True,
-        'params':{
-            'p': 1.0,
-            'grid_size': 2,
-            'use_saliency': True
-        }
-    },
-    "CUTOUT": {
-        'enable': False,
-        'params':{
-            'mask_size': 32
-        }
-    },
+    "CUTOUT": False,
 
     # curriculum learning 관련 설정
     "ALPHA_RANGE": (0.1, 1.3),
@@ -181,7 +165,7 @@ def train_main():
 
     # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
     target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"]
-    selected_augmentations = [i for i in target_augmentations if CFG[i]['enable']] + CFG['NONE_AUGMENTATION_LIST']
+    selected_augmentations = [i for i in target_augmentations if CFG[i]] + CFG['NONE_AUGMENTATION_LIST']
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
     wrong_save_path = os.path.join(work_dir, "wrong_examples")
@@ -241,16 +225,16 @@ def train_main():
             # cutmix or mixup transform settings
             train_loader.dataset.transform = get_randaugment_curriculum_transform(epoch, CFG['EPOCHS'], *CFG['RANDAUG_RANGE']) # 에폭이 진행되는 것에 맞춰서 train augmentation 강화
             alpha = get_alpha(epoch, CFG['EPOCHS'], *CFG['ALPHA_RANGE'])
-            if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
-                cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
-                mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
+            if CFG['CUTMIX'] and CFG["MIXUP"]:
+                cutmix = v2.CutMix(num_classes=num_classes, alpha=alpha)
+                mixup = v2.MixUp(num_classes=num_classes, alpha=alpha)
                 cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
                 print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-            elif CFG['CUTMIX']['enable']:
-                cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+            elif CFG['CUTMIX']:
+                cutmix_or_mixup = v2.CutMix(num_classes=num_classes, alpha=alpha)
                 print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
-            elif CFG["MIXUP"]['enable']:
-                cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
+            elif CFG["MIXUP"]:
+                cutmix_or_mixup = v2.MixUp(num_classes=num_classes, alpha=alpha)
                 print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
             else:
                 cutmix_or_mixup = None
@@ -267,20 +251,20 @@ def train_main():
                     choice = None
                     
                 # cutout을 위해 추가
-                if CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
-                    images = apply_cutout(images, **CFG['CUTOUT']['params'])
+                if CFG['CUTOUT'] and choice == 'CUTOUT':
+                    images = apply_cutout(images)
                 
                 # cutmix mixup을 위해 추가
                 if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
                     images, labels = cutmix_or_mixup(images, labels)
                 
                 # MOSAIC을 위해 추가
-                if CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
-                    images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
+                if CFG['MOSAIC'] and (choice == 'MOSAIC'):
+                    images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC_PARAMS'])
                 
                 # SaliencyMix를 위해 추가
-                if choice == 'SALIENCYMIX' and CFG['SALIENCYMIX']['enable']:
-                    images, labels = saliencymix(images, labels, num_classes, **CFG['SALIENCYMIX']['params'])
+                if choice == 'SALIENCYMIX' and CFG['SALIENCYMIX']:
+                    images, labels = saliencymix(images, labels, num_classes)
 
                 optimizer.zero_grad()
                 outputs = model(images)
