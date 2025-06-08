@@ -26,7 +26,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Hyperparameter Setting
 CFG = {
     "ROOT": '/home/sh/hecto/hecto_datasets/train_v1+v3',
-    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/convnext_large_test',
+    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/proxy_anchor_test',
 
     # retraining 설정
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
@@ -44,7 +44,7 @@ CFG = {
     # 기타 설정값들
     'IMG_SIZE': 512, # Number or Tuple(Height, Width)
     'BATCH_SIZE': 32, # 학습 시 배치 크기
-    'EPOCHS': 30,
+    'EPOCHS': 40,
     'SEED' : 42,
     # 'MODEL_NAME': 'convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384', # 사용할 모델 이름
     'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384',
@@ -77,19 +77,24 @@ CFG = {
         }
     },
     'SCHEDULER': {
-        'class': 'torch.optim.lr_scheduler.CosineAnnealingWarmRestarts',
+        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
         'params': {
-            'T_0': 10,
-            'T_mult': 1,
+            'T_max': 40,
             'eta_min': 1e-7
         }
     },
+    'LOSS_SCHEDULER': {
+        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
+        'params': {
+            'T_max': 40,
+            'eta_min': 1e-5
+        }
+    }
 }
 
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
 # 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
 train_transform = transforms.Compose([
-    # transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
     transforms.RandomResizedCrop((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]), interpolation=transforms.InterpolationMode.BICUBIC),
     transforms.RandomHorizontalFlip(p=0.5),
     transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=3, interpolation=transforms.InterpolationMode.BICUBIC), # 
@@ -110,7 +115,6 @@ def get_randaugment_curriculum_transform(epoch, total_epochs, start, end):
     print(f"[Epoch {epoch}] RandAugment Magnitude: {magnitude}")
     
     transform = T.Compose([
-        # transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
         transforms.RandomResizedCrop((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]), interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=magnitude, interpolation=transforms.InterpolationMode.BICUBIC),
@@ -223,8 +227,9 @@ def train_main():
         ce_loss = get_class_from_string(CFG['CE_LOSS']['class'])(**CFG['CE_LOSS']['params'])
         proxy_loss = get_class_from_string(CFG['PROXY_LOSS']['class'])(num_classes=num_classes, embedding_size=model.feature_dim, **CFG['PROXY_LOSS']['params']).to(torch.device('cuda'))
         optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
-        loss_optimizer = get_class_from_string(CFG['LOSS_OPTIMIZER']['class'])(model.parameters(), **CFG['LOSS_OPTIMIZER']['params'])
+        loss_optimizer = get_class_from_string(CFG['LOSS_OPTIMIZER']['class'])(proxy_loss.parameters(), **CFG['LOSS_OPTIMIZER']['params'])
         scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
+        loss_scheduler = get_class_from_string(CFG['LOSS_SCHEDULER']['class'])(loss_optimizer, **CFG['LOSS_SCHEDULER']['params'])
 
         best_logloss_fold = float('inf')
         current_fold_best_model_path = None
@@ -252,8 +257,6 @@ def train_main():
                 loss = ce_loss_value + proxy_loss_value
                 loss.backward()
 
-                torch.nn.utils.clip_grad_value_(model.parameters(), 10)
-                torch.nn.utils.clip_grad_value_(proxy_loss.parameters(), 10)
                 loss_optimizer.step()
                 optimizer.step()
                 train_loss_epoch += loss.item()
@@ -318,6 +321,10 @@ def train_main():
                 scheduler.step(val_logloss_epoch)
             else:
                 scheduler.step()
+            if CFG['LOSS_SCHEDULER']['class'] == 'torch.optim.lr_scheduler.ReduceLROnPlateau':
+                loss_scheduler.step(val_logloss_epoch)
+            else:
+                loss_scheduler.step()
             current_lr = optimizer.param_groups[0]['lr']
             print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | CE Valid Loss: {ce_avg_val_loss_epoch:.4f} | PROXY Valid Loss: {proxy_avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
 
