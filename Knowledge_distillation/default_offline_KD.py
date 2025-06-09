@@ -4,7 +4,7 @@
 import os
 import gc
 import sys
-sys.path.append("..")
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import pprint
 import random
