@@ -33,23 +33,26 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/kd_test_4', # train.py로 생성된 work_directory
+    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/kd_test_6', # train.py로 생성된 work_directory
     "ROOT": '/home/sh/hecto/hecto_datasets/train_v1+v3', # data_path
     "START_FROM": None,
 
     # 반드시 제공되어야함. 현재 모델이 반드시 workdir 폴더 아래에 위치해 있는 게 보장은 안되는 거 같긴 한데
     # 일단 settings.json에서 모델명, 이미지 사이즈만 뽑아오는거고, 다른 정보는 사용하진 않아서 괜찮을듯 함
     "TEACHER_MODEL_WORKDIRS": [
-        '/home/sh/hecto/best_ensemble_models_2/eva_mosaic_half',
-        '/home/sh/hecto/best_ensemble_models_2/Mosaic_test'
+        '/home/sh/hecto/best_ensemble_models_3/1089',
+        '/home/sh/hecto/best_ensemble_models_3/convnext(1218)_fold1',
+        '/home/sh/hecto/best_ensemble_models_3/EVA_large(12139)_fold1'
     ],
     "TEACHER_MODEL_PATHS": [
-        '/home/sh/hecto/best_ensemble_models_2/eva_mosaic_half/best_model_eva02_large_patch14_448.mim_m38m_ft_in1k_fold1.pth',
-        '/home/sh/hecto/best_ensemble_models_2/Mosaic_test/1089.pth'
+        '/home/sh/hecto/best_ensemble_models_3/1089/1089.pth',
+        '/home/sh/hecto/best_ensemble_models_3/convnext(1218)_fold1/convnext(1218)_fold1.pth',
+        '/home/sh/hecto/best_ensemble_models_3/EVA_large(12139)_fold1/EVA_large(12139)_fold1.pth'
     ], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
     "TEACHER_VAL_LOSSES": [
-        0.0567,
-        0.0553
+        0.1089,
+        0.1218,
+        0.12139
     ],
 
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
@@ -304,7 +307,8 @@ def train_main():
                 teacher['model'].eval()
             train_loss_epoch = 0.0
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
-            for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
+            progress_bar = tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False)
+            for images, labels in progress_bar:
                 images, labels = images.to(device), labels.to(device)
                 images, labels = all_mix_augmentations.forward(images, labels)
                 
@@ -322,6 +326,7 @@ def train_main():
                 loss.backward()
                 optimizer.step()
                 train_loss_epoch += loss.item()
+                progress_bar.set_postfix(total_loss=f"{loss.item():.4f}", lr=f"{optimizer.param_groups[0]['lr']:.1e}")
             avg_train_loss_epoch = train_loss_epoch / len(train_loader)
 
             student_model.eval()
