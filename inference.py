@@ -35,7 +35,7 @@ def inference_main():
     filtered_data = {k: v for k, v in TRAIN_CFG.items() if k not in CFG_INF.keys()}
     CFG_INF.update(filtered_data)
 
-    if len(CFG_INF['IMG_SIZE']) == 2:
+    if not isinstance(CFG_INF['IMG_SIZE'], int) and len(CFG_INF['IMG_SIZE']) == 2:
         CFG_INF['IMG_SIZE'] = tuple(CFG_INF['IMG_SIZE'])
     CFG_INF['IMG_SIZE'] = CFG_INF['IMG_SIZE'] if isinstance(CFG_INF['IMG_SIZE'], tuple) else (CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])
     # transform 정의

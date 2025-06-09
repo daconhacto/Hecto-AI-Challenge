@@ -175,3 +175,78 @@ class TTATestCustomImageDataset(Dataset):
         else:
             images = [self.transform(image) for _ in range(self.tta_times)]
         return images  # (tta_times, C, H, W)
+
+
+import torch
+from torch.utils.data import Dataset
+from PIL import Image
+import pandas as pd
+import numpy as np
+import os
+
+class KnowledgeDistillationDataset(Dataset):
+    def __init__(self, samples_list, image_size, transform, teacher_logits_list, teacher_val_scores):
+        """
+        Args:
+            samples_list (List[Tuple[str, int]]): (img_path, label) 리스트
+            image_size (Tuple[int, int]): 이미지 크기 (H, W)
+            transform: 이미지에 적용할 transform (albumentations 또는 torchvision)
+            teacher_logits_list (List[pd.DataFrame]): img_path를 index로, 각 클래스별 logits가 있는 DataFrame 리스트
+            teacher_val_scores (List[float]) : 앙상블 teacher model의 val score를 담은 list
+        """
+        self.samples_list = samples_list
+        self.image_size = image_size
+        self.transform = transform
+        self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
+        self.teacher_model_weights = [x / sum(teacher_val_scores) for x in teacher_val_scores]
+
+        # Step 1: 각 DataFrame에서 'ID'를 index로 설정하고 정렬
+        for i in range(len(teacher_logits_list)):
+            df = teacher_logits_list[i]
+            if 'ID' not in df.columns:
+                raise ValueError(f"teacher_logits_list[{i}]에 'ID' column이 없습니다.")
+            df = df.set_index('ID')
+            df = df.sort_index()
+            teacher_logits_list[i] = df
+
+        # Step 2: 공통된 ID만 사용
+        common_ids = teacher_logits_list[0].index
+        for df in teacher_logits_list[1:]:
+            common_ids = common_ids.intersection(df.index)
+
+        # Step 3: 공통된 ID만 남기고 정렬
+        for i in range(len(teacher_logits_list)):
+            teacher_logits_list[i] = teacher_logits_list[i].loc[common_ids]
+
+        # Step 4: 가중 평균 계산 (DataFrame끼리 계산, 결과도 DataFrame)
+        self.teacher_logits_df = sum(w * df for w, df in zip(self.teacher_model_weights, teacher_logits_list))
+
+
+    def __len__(self):
+        return len(self.samples_list)
+
+    def __getitem__(self, idx):
+        img_path, label = self.samples_list[idx]
+
+        # 이미지 로드
+        try:
+            image = Image.open(img_path).convert("RGB")
+        except Exception as e:
+            image = Image.fromarray(np.zeros((self.image_size[0], self.image_size[1], 3), dtype=np.uint8))
+
+        # transform이 Albumentations인지 torchvision인지 구분
+        if self.is_albu_transform:
+            image = np.array(image)
+            image = self.transform(image=image)['image']
+        else:
+            image = self.transform(image)
+
+        # teacher logits
+        if img_path in self.teacher_logits_df.index:
+            logits = self.teacher_logits_df.loc[img_path].values.astype(np.float32)
+        else:
+            # 예외 처리: 해당 이미지에 대한 로그잇이 없을 경우 0 벡터 반환
+            num_classes = self.teacher_logits_df.shape[1]
+            logits = np.zeros(num_classes, dtype=np.float32)
+
+        return image, label, logits
