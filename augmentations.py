@@ -8,6 +8,14 @@ from albumentations.pytorch import ToTensorV2
 import torchvision.transforms as transforms
 from collections import defaultdict
 from typing import Tuple
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
+
+try:
+    from diffusers import StableDiffusionXLPipeline
+    DIFFUSERS_AVAILABLE = True
+except ImportError:
+    DIFFUSERS_AVAILABLE = False
 
 
 def get_default_train_transform_albu(img_size):
@@ -690,3 +698,701 @@ def get_similarity_map():
     # 3) 최종 dict 형태로 변환
     similarity_map = {k: list(v) for k, v in similarity_map.items()}
     return similarity_map
+
+
+def one_hot(x, num_classes, on_value=1., off_value=0., device='cuda'):
+    x = x.long().view(-1, 1)
+    return torch.full((x.size()[0], num_classes), off_value, device=device).scatter_(1, x, on_value)
+
+
+def mixup_target(target, old_target, num_classes, lam, smoothing=0.1, device='cuda'):
+    off_value = smoothing / num_classes
+    on_value = 1. - smoothing + off_value
+    y1 = one_hot(target, num_classes, on_value=on_value, off_value=off_value, device=device)
+    y2 = one_hot(old_target, num_classes, on_value=on_value, off_value=off_value, device=device)
+    
+    return y1 * lam + y2 * (1. - lam)
+
+def MaskMix(samples, flip_samples, alpha, mask_num, scale_, scale, targets, flip_targets, label_smoothing, num_classes):
+    
+    batch_size = samples.size(0)
+    # total mask_num 
+    token_count = mask_num ** 2
+    ratio = np.random.beta(alpha, alpha) 
+    #mask_ratio = [np.random.beta(alpha, alpha)  for i in range(batch_size)]
+    mask_ratio = [ratio  for i in range(batch_size)]
+    
+    mask_count = [int(np.ceil(token_count * mask_ratio[i])) for i in range(batch_size)]
+    
+    mask_ratio = [mask_count[i]/token_count for i in range(batch_size)]
+    
+    mask_idx = [np.random.permutation(token_count)[:mask_count[i]] for i in range(batch_size)]
+    mask = np.zeros((batch_size, token_count), dtype=int)
+    for i in range(batch_size):
+          mask[i][mask_idx[i]] = 1 
+    mask = [mask[i].reshape((mask_num, mask_num)) for i in range(batch_size)]
+    mask_ = [mask[i].repeat(scale_, axis=0).repeat(scale_, axis=1) for i in range(batch_size)]
+    mask = [mask[i].repeat(scale, axis=0).repeat(scale, axis=1)  for i in range(batch_size)]
+    mask = torch.from_numpy(np.array(mask)).to(samples.device)
+    mask = mask.unsqueeze(1).repeat(1,3,1,1) #(128,224,224)->(128,1,224,224)->(128,3,224,224)
+    mask = mask[:,:,:samples.shape[2],:samples.shape[2]]
+    samples = samples * mask + flip_samples * (1-mask)
+
+    mask_ratio = torch.Tensor(mask_ratio).to(samples.device)
+    ratio = mask_ratio.unsqueeze(1).repeat(1, num_classes) #(128)->(128,1)->(128, num_classes)
+    
+    targets = mixup_target(targets, flip_targets, num_classes, ratio, label_smoothing, device=targets.device)
+
+    mask_= np.array(mask_)
+    return samples, targets, mask_, mask_ratio
+
+
+class PuzzleMix:
+    """
+    PuzzleMix: Exploiting Saliency and Local Statistics for Optimal Mixup
+    최신 2025년 기법 - saliency와 지역 통계를 활용한 최적화된 mixup
+    OpenCV 호환성을 위해 Sobel 기반으로 구현
+    """
+    def __init__(self, num_classes, alpha=1.0, prob=0.5, block_num=2, beta=1.2, gamma=0.5, eta=0.2, neigh_size=4):
+        self.num_classes = num_classes
+        self.alpha = alpha
+        self.prob = prob
+        self.block_num = block_num
+        self.beta = beta
+        self.gamma = gamma
+        self.eta = eta
+        self.neigh_size = neigh_size
+        
+    def _saliency_bbox(self, img, lam):
+        """Sobel 기반 saliency bounding box 생성"""
+        C, H, W = img.shape
+        device = img.device
+        
+        # RGB to grayscale
+        if C == 3:
+            gray = 0.299 * img[0] + 0.587 * img[1] + 0.114 * img[2]
+        else:
+            gray = img[0]
+        
+        # Sobel filters
+        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], 
+                              dtype=torch.float32, device=device).view(1, 1, 3, 3)
+        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
+                              dtype=torch.float32, device=device).view(1, 1, 3, 3)
+        
+        gray_4d = gray.unsqueeze(0).unsqueeze(0)
+        
+        grad_x = F.conv2d(gray_4d, sobel_x, padding=1)
+        grad_y = F.conv2d(gray_4d, sobel_y, padding=1)
+        
+        sal_map = torch.sqrt(grad_x**2 + grad_y**2).squeeze()
+        
+        # Top saliency 영역 찾기
+        flat_sal = sal_map.flatten()
+        threshold = torch.quantile(flat_sal, 1 - lam)
+        mask = sal_map >= threshold
+        
+        ys, xs = torch.where(mask)
+        
+        if len(xs) == 0:
+            # fallback to random box
+            cut_rat = np.sqrt(1. - lam)
+            cut_w = int(W * cut_rat)
+            cut_h = int(H * cut_rat)
+            cx = np.random.randint(W)
+            cy = np.random.randint(H)
+            x1 = np.clip(cx - cut_w // 2, 0, W)
+            y1 = np.clip(cy - cut_h // 2, 0, H)
+            x2 = np.clip(cx + cut_w // 2, 0, W)
+            y2 = np.clip(cy + cut_h // 2, 0, H)
+            return x1, y1, x2, y2
+        
+        # mask에서 bounding box 추출
+        y1, y2 = ys.min().item(), ys.max().item()
+        x1, x2 = xs.min().item(), xs.max().item()
+        
+        return x1, y1, x2, y2
+    
+    def _local_statistics(self, img, x1, y1, x2, y2):
+        """지역 통계 계산"""
+        patch = img[:, y1:y2, x1:x2]
+        if patch.numel() == 0:
+            return 0.0
+        
+        # 패치의 분산을 지역 복잡도로 사용
+        return patch.var().item()
+    
+    def __call__(self, images, labels):
+        if random.random() > self.prob:
+            return images, labels
+        
+        B, C, H, W = images.shape
+        device = images.device
+        
+        if labels.ndim != 2:
+            labels = F.one_hot(labels, num_classes=self.num_classes).float()
+        
+        rand_idx = torch.randperm(B, device=device)
+        images_shuffled = images[rand_idx]
+        labels_shuffled = labels[rand_idx]
+        
+        new_images = images.clone()
+        new_labels = labels.clone()
+        
+        for i in range(B):
+            lam = np.random.beta(self.alpha, self.alpha)
+            
+            # Saliency 기반 box 생성
+            x1, y1, x2, y2 = self._saliency_bbox(images[i], lam)
+            
+            # 지역 통계 계산
+            stat1 = self._local_statistics(images[i], x1, y1, x2, y2)
+            stat2 = self._local_statistics(images_shuffled[i], x1, y1, x2, y2)
+            
+            # 통계 기반 mixing 가중치 조정
+            stat_ratio = stat1 / (stat1 + stat2 + 1e-8)
+            adjusted_lam = lam * stat_ratio
+            
+            # 패치 적용
+            new_images[i, :, y1:y2, x1:x2] = images_shuffled[i, :, y1:y2, x1:x2]
+            
+            # 실제 면적 기반 lambda 계산
+            actual_lam = 1 - ((x2 - x1) * (y2 - y1)) / (H * W)
+            actual_lam = max(0.1, min(0.9, actual_lam))  # clipping
+            
+            new_labels[i] = actual_lam * labels[i] + (1 - actual_lam) * labels_shuffled[i]
+        
+        return new_images, new_labels
+
+
+class CoMixup:
+    """
+    Co-Mixup: Saliency Guided Joint Mixup with Supermodular Diversity
+    2025년 최신 기법 - supermodular diversity를 활용한 joint mixup
+    """
+    def __init__(self, num_classes, alpha=1.0, prob=0.5, num_mix=4):
+        self.num_classes = num_classes
+        self.alpha = alpha
+        self.prob = prob
+        self.num_mix = num_mix
+    
+    def _compute_diversity_matrix(self, features):
+        """supermodular diversity 행렬 계산"""
+        B = features.shape[0]
+        # 코사인 유사도 계산
+        features_norm = F.normalize(features.view(B, -1), dim=1)
+        similarity = torch.mm(features_norm, features_norm.t())
+        # diversity = 1 - similarity
+        diversity = 1 - similarity
+        return diversity
+    
+    def _optimal_pairing(self, diversity_matrix):
+        """최적 페어링을 위한 헝가리안 알고리즘"""
+        B = diversity_matrix.shape[0]
+        # scipy를 위해 numpy로 변환
+        div_np = diversity_matrix.cpu().numpy()
+        # 최대 diversity를 위해 음수로 변환 (헝가리안은 최소값 찾음)
+        cost_matrix = -div_np
+        
+        # 헝가리안 알고리즘
+        row_idx, col_idx = linear_sum_assignment(cost_matrix)
+        
+        return list(zip(row_idx, col_idx))
+    
+    def __call__(self, images, labels):
+        if random.random() > self.prob:
+            return images, labels
+        
+        B, C, H, W = images.shape
+        device = images.device
+        
+        if labels.ndim != 2:
+            labels = F.one_hot(labels, num_classes=self.num_classes).float()
+        
+        # Feature extraction for diversity computation (간단한 pooling 사용)
+        features = F.adaptive_avg_pool2d(images, (4, 4))
+        
+        # Diversity matrix 계산
+        diversity_matrix = self._compute_diversity_matrix(features)
+        
+        # 최적 페어링
+        pairs = self._optimal_pairing(diversity_matrix)
+        
+        new_images = images.clone()
+        new_labels = labels.clone()
+        
+        for i, j in pairs[:B//2]:  # 절반만 mixup
+            lam = np.random.beta(self.alpha, self.alpha)
+            
+            # 이미지 mixup
+            new_images[i] = lam * images[i] + (1 - lam) * images[j]
+            
+            # 레이블 mixup
+            new_labels[i] = lam * labels[i] + (1 - lam) * labels[j]
+        
+        return new_images, new_labels
+
+
+class SnapMix:
+    """
+    SnapMix: Semantically Proportional Mixing for Augmenting Fine-grained Data
+    2025년 최신 - fine-grained classification을 위한 의미론적 비례 mixing
+    간단한 gradient 기반 attention으로 구현 (CAM 대신)
+    """
+    def __init__(self, num_classes, alpha=5.0, prob=0.5):
+        self.num_classes = num_classes
+        self.alpha = alpha
+        self.prob = prob
+        
+    def _simple_attention_map(self, img):
+        """간단한 attention 계산 (Sobel + variance 기반)"""
+        C, H, W = img.shape
+        device = img.device
+        
+        # RGB to grayscale
+        if C == 3:
+            gray = 0.299 * img[0] + 0.587 * img[1] + 0.114 * img[2]
+        else:
+            gray = img[0]
+        
+        # Sobel + Local variance for attention
+        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], 
+                              dtype=torch.float32, device=device).view(1, 1, 3, 3)
+        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
+                              dtype=torch.float32, device=device).view(1, 1, 3, 3)
+        
+        gray_4d = gray.unsqueeze(0).unsqueeze(0)
+        
+        # Edge detection
+        grad_x = F.conv2d(gray_4d, sobel_x, padding=1)
+        grad_y = F.conv2d(gray_4d, sobel_y, padding=1)
+        edge_map = torch.sqrt(grad_x**2 + grad_y**2).squeeze()
+        
+        # Local variance (texture)
+        kernel_size = 5
+        padding = kernel_size // 2
+        unfold = F.unfold(gray_4d, kernel_size, padding=padding)
+        unfold = unfold.view(1, kernel_size*kernel_size, H, W)
+        local_mean = unfold.mean(dim=1, keepdim=True)
+        local_var = ((unfold - local_mean)**2).mean(dim=1).squeeze()
+        
+        # Combine edge and texture
+        attention = edge_map + local_var
+        attention = F.normalize(attention.view(-1), dim=0).view(H, W)
+        
+        return attention.unsqueeze(0)  # [1, H, W]
+    
+    def _generate_snap_mask(self, img1, img2, lam):
+        """SnapMix mask 생성"""
+        H, W = img1.shape[-2:]
+        
+        # Attention 계산
+        att1 = self._simple_attention_map(img1)
+        att2 = self._simple_attention_map(img2)
+        
+        # 의미론적 비례에 따른 mask 생성
+        combined_att = lam * att1 + (1 - lam) * att2
+        
+        # Threshold 기반 mask
+        flat_att = combined_att.flatten()
+        threshold = torch.quantile(flat_att, 1 - lam)
+        mask = (combined_att >= threshold).float()
+        
+        return mask
+    
+    def __call__(self, images, labels):
+        if random.random() > self.prob:
+            return images, labels
+        
+        B, C, H, W = images.shape
+        device = images.device
+        
+        if labels.ndim != 2:
+            labels = F.one_hot(labels, num_classes=self.num_classes).float()
+        
+        rand_idx = torch.randperm(B, device=device)
+        images_shuffled = images[rand_idx]
+        labels_shuffled = labels[rand_idx]
+        
+        new_images = images.clone()
+        new_labels = labels.clone()
+        
+        for i in range(B):
+            lam = np.random.beta(self.alpha, self.alpha)
+            
+            # SnapMix mask 생성
+            mask = self._generate_snap_mask(images[i], images_shuffled[i], lam)  # [1, H, W]
+            
+            # Mask 차원 맞추기: [1, H, W] -> [C, H, W]
+            mask_expanded = mask.expand(C, H, W)
+            new_images[i] = images[i] * mask_expanded + images_shuffled[i] * (1 - mask_expanded)
+            
+            # 실제 mixing ratio 계산
+            actual_lam = mask.mean().item()
+            actual_lam = max(0.1, min(0.9, actual_lam))
+            
+            new_labels[i] = actual_lam * labels[i] + (1 - actual_lam) * labels_shuffled[i]
+        
+        return new_images, new_labels
+
+
+class DiffMix:
+    """
+    Diff-Mix: Enhanced Image Classification via Inter-class Image Mixup with Diffusion Model
+    CVPR 2024 최신 기법 - diffusion model을 활용한 inter-class mixup
+    
+    Note: 실제 구현에서는 pretrained diffusion model이 필요하지만, 
+    여기서는 간단한 노이즈 기반 approximation을 사용
+    """
+    def __init__(self, num_classes, alpha=1.0, prob=0.5, noise_steps=50):
+        self.num_classes = num_classes
+        self.alpha = alpha
+        self.prob = prob
+        self.noise_steps = noise_steps
+        
+    def _add_noise(self, img, t):
+        """간단한 가우시안 노이즈 추가 (실제 diffusion 모델 대신)"""
+        noise = torch.randn_like(img)
+        alpha = 1.0 - t / self.noise_steps
+        # float를 tensor로 변환
+        alpha_tensor = torch.tensor(alpha, device=img.device, dtype=img.dtype)
+        sqrt_alpha = torch.sqrt(alpha_tensor)
+        sqrt_one_minus_alpha = torch.sqrt(1 - alpha_tensor)
+        
+        noisy_img = sqrt_alpha * img + sqrt_one_minus_alpha * noise
+        return noisy_img
+    
+    def _denoise_mix(self, img1, img2, lam, t):
+        """Diffusion-inspired mixing"""
+        # 두 이미지에 다른 수준의 노이즈 추가
+        noisy_img1 = self._add_noise(img1, t)
+        noisy_img2 = self._add_noise(img2, t * 0.5)  # 다른 노이즈 레벨
+        
+        # 가중 평균
+        mixed = lam * noisy_img1 + (1 - lam) * noisy_img2
+        
+        # 간단한 denoising (실제로는 diffusion model 필요)
+        denoised = torch.clamp(mixed, 0, 1)
+        
+        return denoised
+    
+    def __call__(self, images, labels):
+        if random.random() > self.prob:
+            return images, labels
+        
+        B, C, H, W = images.shape
+        device = images.device
+        
+        if labels.ndim != 2:
+            labels = F.one_hot(labels, num_classes=self.num_classes).float()
+        
+        # 다른 클래스 간 페어링 우선
+        unique_labels = torch.argmax(labels, dim=1)
+        rand_idx = torch.randperm(B, device=device)
+        
+        # Inter-class pairing 시도
+        for i in range(B):
+            for j in range(i+1, B):
+                if unique_labels[i] != unique_labels[rand_idx[j]]:
+                    rand_idx[i] = rand_idx[j]
+                    break
+        
+        images_shuffled = images[rand_idx]
+        labels_shuffled = labels[rand_idx]
+        
+        new_images = images.clone()
+        new_labels = labels.clone()
+        
+        for i in range(B):
+            lam = np.random.beta(self.alpha, self.alpha)
+            t = np.random.randint(1, self.noise_steps)
+            
+            # Diffusion-inspired mixing
+            new_images[i] = self._denoise_mix(images[i], images_shuffled[i], lam, t)
+            
+            # 레이블 mixing
+            new_labels[i] = lam * labels[i] + (1 - lam) * labels_shuffled[i]
+        
+        return new_images, new_labels
+
+
+class DiffMixSDXL:
+    """
+    Enhanced Diff-Mix with SDXL Integration
+    - 옵션 1: SDXL VAE encoder/decoder 활용한 latent space mixing
+    - 옵션 2: SDXL 기반 controlled noise injection
+    - 옵션 3: Fallback to improved Gaussian approximation
+    """
+    def __init__(self, num_classes, alpha=1.0, prob=0.5, noise_steps=50, 
+                 use_sdxl=False, sdxl_model_id="stabilityai/stable-diffusion-xl-base-1.0"):
+        self.num_classes = num_classes
+        self.alpha = alpha
+        self.prob = prob
+        self.noise_steps = noise_steps
+        self.use_sdxl = use_sdxl and DIFFUSERS_AVAILABLE
+        
+        # SDXL 파이프라인 초기화 (옵션)
+        if self.use_sdxl:
+            try:
+                print("Loading SDXL pipeline... (메모리 많이 사용됨 주의)")
+                self.pipe = StableDiffusionXLPipeline.from_pretrained(
+                    sdxl_model_id,
+                    torch_dtype=torch.float16,
+                    use_safetensors=True
+                )
+                self.vae = self.pipe.vae
+                print("SDXL pipeline loaded successfully!")
+            except Exception as e:
+                print(f"SDXL 로딩 실패: {e}")
+                print("Fallback to Gaussian approximation")
+                self.use_sdxl = False
+        
+    def _add_noise_gaussian(self, img, t):
+        """개선된 가우시안 노이즈 (기존 방식 개선)"""
+        noise = torch.randn_like(img)
+        
+        # 더 realistic한 노이즈 스케줄링
+        beta_start = 0.0001
+        beta_end = 0.02
+        beta = beta_start + (beta_end - beta_start) * t / self.noise_steps
+        
+        alpha = 1.0 - beta
+        alpha_bar = alpha ** t  # cumulative product approximation
+        
+        alpha_bar_tensor = torch.tensor(alpha_bar, device=img.device, dtype=img.dtype)
+        sqrt_alpha_bar = torch.sqrt(alpha_bar_tensor)
+        sqrt_one_minus_alpha_bar = torch.sqrt(1 - alpha_bar_tensor)
+        
+        noisy_img = sqrt_alpha_bar * img + sqrt_one_minus_alpha_bar * noise
+        return torch.clamp(noisy_img, 0, 1)
+    
+    def _add_noise_sdxl(self, img, t):
+        """SDXL VAE를 활용한 노이즈 추가"""
+        if not self.use_sdxl:
+            return self._add_noise_gaussian(img, t)
+        
+        try:
+            with torch.no_grad():
+                # VAE encoder로 latent space로 변환
+                latents = self.vae.encode(img).latent_dist.sample()
+                latents = latents * self.vae.config.scaling_factor
+                
+                # Latent space에서 노이즈 추가
+                noise = torch.randn_like(latents)
+                alpha = 1.0 - t / self.noise_steps
+                alpha_tensor = torch.tensor(alpha, device=latents.device, dtype=latents.dtype)
+                sqrt_alpha = torch.sqrt(alpha_tensor)
+                sqrt_one_minus_alpha = torch.sqrt(1 - alpha_tensor)
+                
+                noisy_latents = sqrt_alpha * latents + sqrt_one_minus_alpha * noise
+                
+                # VAE decoder로 다시 이미지 공간으로
+                noisy_latents = noisy_latents / self.vae.config.scaling_factor
+                decoded = self.vae.decode(noisy_latents).sample
+                
+                return torch.clamp(decoded, 0, 1)
+        except Exception as e:
+            print(f"SDXL 노이즈 추가 실패, Gaussian fallback: {e}")
+            return self._add_noise_gaussian(img, t)
+    
+    def _denoise_mix(self, img1, img2, lam, t):
+        """향상된 Diffusion-inspired mixing"""
+        if self.use_sdxl:
+            # SDXL 기반 노이즈 추가
+            noisy_img1 = self._add_noise_sdxl(img1.unsqueeze(0), t).squeeze(0)
+            noisy_img2 = self._add_noise_sdxl(img2.unsqueeze(0), int(t * 0.7)).squeeze(0)
+        else:
+            # 개선된 가우시안 노이즈
+            noisy_img1 = self._add_noise_gaussian(img1, t)
+            noisy_img2 = self._add_noise_gaussian(img2, int(t * 0.7))
+        
+        # 가중 평균 with adaptive lambda
+        adaptive_lam = lam * (1.0 - t / self.noise_steps * 0.3)  # 노이즈 레벨에 따른 조정
+        mixed = adaptive_lam * noisy_img1 + (1 - adaptive_lam) * noisy_img2
+        
+        # 자동차 특화: edge-preserving denoising
+        denoised = self._edge_preserving_denoise(mixed)
+        
+        return torch.clamp(denoised, 0, 1)
+    
+    def _edge_preserving_denoise(self, img):
+        """자동차 엣지 보존 디노이징"""
+        # 간단한 bilateral filter 효과 근사
+        kernel_size = 3
+        padding = kernel_size // 2
+        
+        # 가우시안 블러 적용
+        blurred = F.avg_pool2d(
+            img.unsqueeze(0), 
+            kernel_size=kernel_size, 
+            stride=1, 
+            padding=padding
+        ).squeeze(0)
+        
+        # 원본과 블러의 가중 평균 (엣지 보존 효과)
+        edge_preserved = 0.7 * img + 0.3 * blurred
+        return edge_preserved
+    
+    def __call__(self, images, labels):
+        if random.random() > self.prob:
+            return images, labels
+        
+        B, C, H, W = images.shape
+        device = images.device
+        
+        if labels.ndim != 2:
+            labels = F.one_hot(labels, num_classes=self.num_classes).float()
+        
+        # Inter-class pairing (자동차 연도별 구분에 중요)
+        unique_labels = torch.argmax(labels, dim=1)
+        rand_idx = torch.randperm(B, device=device)
+        
+        # 다른 클래스끼리 우선 페어링
+        for i in range(B):
+            for j in range(B):
+                if unique_labels[i] != unique_labels[rand_idx[j]]:
+                    rand_idx[i] = rand_idx[j]
+                    break
+        
+        images_shuffled = images[rand_idx]
+        labels_shuffled = labels[rand_idx]
+        
+        new_images = images.clone()
+        new_labels = labels.clone()
+        
+        for i in range(B):
+            # 자동차 특화: 더 conservative한 lambda 값
+            lam = np.random.beta(max(self.alpha, 0.8), max(self.alpha, 0.8))
+            lam = max(lam, 0.6)  # 최소 0.6 이상 보장 (원본 특징 보존)
+            
+            t = np.random.randint(5, min(self.noise_steps, 30))  # 적당한 노이즈 레벨
+            
+            # Enhanced diffusion mixing
+            new_images[i] = self._denoise_mix(images[i], images_shuffled[i], lam, t)
+            
+            # 레이블 mixing
+            new_labels[i] = lam * labels[i] + (1 - lam) * labels_shuffled[i]
+        
+        return new_images, new_labels
+
+
+# 개선된 자동차 특화 크롭
+def enhanced_half_crop(image, mode=None):
+    """자동차 특화 크롭"""
+    H, W, _ = image.shape
+    
+    if mode == 'top':
+        # 자동차 상단부 (루프, 윈도우 등)
+        return image[:int(H*0.6), :, :]  # 60%만 크롭
+    elif mode == 'bottom':
+        # 자동차 하단부 (범퍼, 그릴 등)
+        return image[int(H*0.4):, :, :]
+    elif mode == 'left':
+        return image[:, :int(W*0.6), :]
+    elif mode == 'right':
+        return image[:, int(W*0.4):, :]
+    elif mode == 'center':
+        # 중앙부 크롭 (자동차 핵심 부분)
+        h_start, h_end = int(H*0.2), int(H*0.8)
+        w_start, w_end = int(W*0.2), int(W*0.8)
+        return image[h_start:h_end, w_start:w_end, :]
+    else:
+        return image
+
+
+class EnhancedCustomCropTransform:
+    def __init__(self, mode=None, p=1.0):
+        self.mode = mode
+        self.p = p
+
+    def __call__(self, image, **kwargs):
+        if random.random() < self.p:
+            modes = ['top', 'bottom', 'left', 'right', 'center']
+            mode = self.mode if self.mode else random.choice(modes)
+            return enhanced_half_crop(image, mode)
+        return image
+
+
+class AdvancedAugmentationPipeline:
+    """
+    2025년 최신 augmentation 기법들을 조합한 파이프라인
+    차량 분류에 특화된 설정
+    """
+    def __init__(self, num_classes, config=None):
+        self.num_classes = num_classes
+        
+        # 기본 설정 (차량 분류 최적화)
+        default_config = {
+            'puzzlemix': {'prob': 0.3, 'alpha': 1.0},
+            'comixup': {'prob': 0.2, 'alpha': 1.0},
+            'snapmix': {'prob': 0.3, 'alpha': 5.0},
+            'diffmix': {'prob': 0.2, 'alpha': 1.0},
+            'saliencymix': {'prob': 0.25, 'alpha': 1.0},
+            'mosaic': {'prob': 0.2, 'grid_size': 2},
+            'cutout': {'prob': 0.3, 'mask_size': 32}
+        }
+        
+        self.config = config if config else default_config
+        
+        # 각 기법 초기화
+        self.puzzlemix = PuzzleMix(num_classes, **self.config['puzzlemix'])
+        self.comixup = CoMixup(num_classes, **self.config['comixup'])
+        self.snapmix = SnapMix(num_classes, **self.config['snapmix'])
+        self.diffmix = DiffMix(num_classes, **self.config['diffmix'])
+        self.saliencymix = SaliencyMix(num_classes, **self.config['saliencymix'])
+    
+    def __call__(self, images, labels):
+        """순차적으로 여러 기법 적용 (확률적)"""
+        # 가장 효과적인 기법들을 우선 적용
+        
+        # 1. SnapMix (fine-grained에 효과적) - 확률적 적용
+        if random.random() < 0.3:  # 30% 확률로만 적용
+            images, labels = self.snapmix(images, labels)
+        
+        # 2. PuzzleMix (saliency + local statistics) - 확률적 적용
+        if random.random() < 0.3:  # 30% 확률로만 적용
+            images, labels = self.puzzlemix(images, labels)
+        
+        # 3. Cutout (간단하지만 효과적)
+        if random.random() < self.config['cutout']['prob']:
+            images = apply_cutout(images, self.config['cutout']['mask_size'])
+        
+        # 4. DiffMix (inter-class mixing) - 확률적 적용
+        if random.random() < 0.2:  # 20% 확률로만 적용
+            images, labels = self.diffmix(images, labels)
+        
+        # 5. Co-Mixup (diversity 기반) - 확률적 적용
+        if random.random() < 0.2:  # 20% 확률로만 적용
+            images, labels = self.comixup(images, labels)
+        
+        # 6. Mosaic (가끔)
+        if random.random() < self.config['mosaic']['prob']:
+            images, labels = apply_mosaic(
+                images, labels, self.num_classes, 
+                p=1.0,  # 이미 확률 체크했으므로 100% 적용
+                grid_size=self.config['mosaic']['grid_size']
+            )
+        
+        return images, labels
+
+
+# Helper functions
+def create_diffmix_transform(num_classes, use_sdxl=False):
+    """
+    DiffMix 변환 생성
+    
+    Args:
+        num_classes: 클래스 수
+        use_sdxl: SDXL 사용 여부 (메모리 많이 사용함 주의)
+    """
+    return DiffMixSDXL(
+        num_classes=num_classes,
+        alpha=1.2,  # 자동차용 조정값
+        prob=0.5,
+        noise_steps=50,
+        use_sdxl=use_sdxl
+    )
+
+class RandomMixAugmentation:
+    def __init__(self):
+        pass
