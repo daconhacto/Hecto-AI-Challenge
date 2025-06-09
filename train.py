@@ -237,7 +237,7 @@ def train_main():
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
             for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
                 images, labels = images.to(device), labels.to(device)
-                images, labels = all_mix_augmentations(images, labels)
+                images, labels = all_mix_augmentations.forward(images, labels)
                 optimizer.zero_grad()
                 outputs = model(images)
                 loss = criterion(outputs, labels)

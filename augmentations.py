@@ -1400,6 +1400,8 @@ class RandomMixAugmentation:
         target_augmentations = CFG['ALL_AUGMENTATIONS']
         self.selected_augmentations = [i for i in target_augmentations if CFG[i]['enable']] + CFG['NONE_AUGMENTATION_LIST']
         
+        print(f"현재 TARGETs : {target_augmentations}")
+        print(f"선택된 AUGMENTATIONS : {self.selected_augmentations}")
         # cutmix or mixup transform settings
         if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
             cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
