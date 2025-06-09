@@ -1,5 +1,6 @@
 import os
 import sys
+sys.path.append("..")
 import json
 import pprint
 import random

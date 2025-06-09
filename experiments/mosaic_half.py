@@ -1,5 +1,6 @@
 import os
 import sys
+sys.path.append("..")
 import json
 import random
 import pandas as pd
