@@ -1397,6 +1397,7 @@ def create_diffmix_transform(num_classes, use_sdxl=False):
 class RandomMixAugmentation:
     def __init__(self, CFG, num_classes):
         self.CFG =CFG
+        self.num_classes = num_classes
         target_augmentations = CFG['ALL_AUGMENTATIONS']
         self.selected_augmentations = [i for i in target_augmentations if CFG[i]['enable']] + CFG['NONE_AUGMENTATION_LIST']
         
