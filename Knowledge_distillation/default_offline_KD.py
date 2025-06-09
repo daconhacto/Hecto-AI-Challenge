@@ -224,7 +224,7 @@ def train_main():
             train_loss_epoch = 0.0
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
             progress_bar = tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False)
-            for images, labels in progress_bar:
+            for images, labels, teacher_logits in progress_bar:
                 images, labels, teacher_logits = images.to(device), labels.to(device), teacher_logits.to(device)
                 optimizer.zero_grad()
                 outputs = student_model(images)
