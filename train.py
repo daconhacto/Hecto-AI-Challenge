@@ -107,7 +107,7 @@ CFG = {
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
 # --- Albumentations 기반 이미지 변환 정의 ---
 train_transform = A.Compose([
-    A.Lambda(name='half_crop', image=CustomCropTransform(p=0.5)),
+    CustomCropTransformConsiderRatio(p=0.5),
     A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
     A.HorizontalFlip(p=0.5),
     A.Rotate(limit=15, p=0.5),
