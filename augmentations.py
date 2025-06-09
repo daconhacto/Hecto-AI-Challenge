@@ -10,6 +10,7 @@ from collections import defaultdict
 from typing import Tuple
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
+from torchvision.transforms import v2
 
 try:
     from diffusers import StableDiffusionXLPipeline
@@ -1394,5 +1395,47 @@ def create_diffmix_transform(num_classes, use_sdxl=False):
     )
 
 class RandomMixAugmentation:
-    def __init__(self):
-        pass
+    def __init__(self, CFG, num_classes):
+        self.CFG =CFG
+        target_augmentations = CFG['ALL_AUGMENTATIONS']
+        self.selected_augmentations = [i for i in target_augmentations if CFG[i]['enable']] + CFG['NONE_AUGMENTATION_LIST']
+        
+        # cutmix or mixup transform settings
+        if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
+            cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+            mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
+            self.cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
+            print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
+        elif CFG['CUTMIX']['enable']:
+            self.cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+            print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
+        elif CFG["MIXUP"]['enable']:
+            self.cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
+            print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
+        else:
+            self.cutmix_or_mixup = None
+    
+    def forward(self, images, labels):
+        if self.selected_augmentations:
+            choice = random.choice(self.selected_augmentations)
+            if choice == "NONE":
+                choice = None
+        else:
+            choice = None
+        
+        # cutout을 위해 추가
+        if self.CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
+            images = apply_cutout(images, **self.CFG['CUTOUT']['params'])
+        
+        # cutmix mixup을 위해 추가
+        if self.cutmix_or_mixup:
+            images, labels = self.cutmix_or_mixup(images, labels)
+        
+        # MOSAIC을 위해 추가
+        if self.CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
+            images, labels = apply_mosaic(images, labels, self.num_classes, **self.CFG['MOSAIC']['params'])
+        
+        # SaliencyMix를 위해 추가
+        if choice == 'SALIENCYMIX' and self.CFG['SALIENCYMIX']['enable']:
+            images, labels = saliencymix(images, labels, self.num_classes, **self.CFG['SALIENCYMIX']['params'])
+        return images, labels

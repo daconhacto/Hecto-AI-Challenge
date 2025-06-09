@@ -175,33 +175,3 @@ class TTATestCustomImageDataset(Dataset):
         else:
             images = [self.transform(image) for _ in range(self.tta_times)]
         return images  # (tta_times, C, H, W)
-
-
-class KDDataset(Dataset):
-    def __init__(self, samples_list, image_size, transform=None, teacher_img_sizes=None):
-        self.samples_list = samples_list
-        self.transform = transform
-        self.image_size = image_size if isinstance(image_size, tuple) else (image_size, image_size)
-        self.teacher_img_sizes = teacher_img_sizes
-        self.is_albu_transform = (isinstance(self.transform, A.BasicTransform) or isinstance(self.transform, A.Compose))
-
-    def __len__(self):
-        return len(self.samples_list)
-
-    def __getitem__(self, idx):
-        img_path, label = self.samples_list[idx]
-        try:
-            image = Image.open(img_path).convert('RGB')
-        except FileNotFoundError:
-            dummy_tensor = torch.zeros((3, self.image_size[0], self.image_size[1]))
-            return (dummy_tensor, 0) if self.is_train else (dummy_tensor, 0, img_path)
-        
-        # transform이 Albumentations인지 torchvision인지 구분
-        if self.is_albu_transform:
-            image = np.array(image)
-            image = self.transform(image=image)['image']
-        else:
-            image = self.transform(image)
-        teacher_images = [TF.resize(image, size=[teacher_img_size, teacher_img_size]) for teacher_img_size in self.teacher_img_sizes]
-
-        return (image, teacher_images, label)
