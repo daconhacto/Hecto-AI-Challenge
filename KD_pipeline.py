@@ -241,25 +241,6 @@ def train_main():
     class_names = initial_dataset.classes
     num_classes = len(class_names)
     print(f"클래스: {class_names} (총 {num_classes}개)")
-
-    # cutmix or mixup transform settings
-    if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
-        cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
-        mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
-        cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
-        print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['CUTMIX']['enable']:
-        cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
-        print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG["MIXUP"]['enable']:
-        cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
-        print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    else:
-        cutmix_or_mixup = None
-
-    # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
-    target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"]
-    selected_augmentations = [i for i in target_augmentations if CFG[i]['enable']] + CFG['NONE_AUGMENTATION_LIST']
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
     wrong_save_path = os.path.join(work_dir, "wrong_examples")
@@ -270,7 +251,9 @@ def train_main():
     with open(os.path.join(work_dir, 'class_names.json'), 'w') as f:
         json.dump(class_names, f)
     print(f"Saved class_names to class_names.json")
-
+    
+    # mix augmentation 종합 클래스 정의
+    all_mix_augmentations = RandomMixAugmentation(CFG, num_classes=num_classes)
 
     skf = StratifiedKFold(n_splits=CFG['N_FOLDS'], shuffle=True, random_state=CFG['SEED'])
     overall_best_logloss = float('inf')
@@ -322,29 +305,7 @@ def train_main():
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
             for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
                 images, labels = images.to(device), labels.to(device)
-
-                if selected_augmentations:
-                    choice = random.choice(selected_augmentations)
-                    if choice == "NONE":
-                        choice = None
-                else:
-                    choice = None
-                    
-                # cutout을 위해 추가
-                if CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
-                    images = apply_cutout(images, **CFG['CUTOUT']['params'])
-                
-                # cutmix mixup을 위해 추가
-                if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
-                    images, labels = cutmix_or_mixup(images, labels)
-                
-                # MOSAIC을 위해 추가
-                if CFG['MOSAIC']['enable'] and (choice == 'MOSAIC'):
-                    images, labels = apply_mosaic(images, labels, num_classes, **CFG['MOSAIC']['params'])
-                
-                # SaliencyMix를 위해 추가
-                if choice == 'SALIENCYMIX' and CFG['SALIENCYMIX']['enable']:
-                    images, labels = saliencymix(images, labels, num_classes, **CFG['SALIENCYMIX']['params'])
+                images, labels = all_mix_augmentations.forward(images, labels)
                 
                 # teacher의 logit 뽑아내기
                 teacher_logits = 0.

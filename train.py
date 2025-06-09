@@ -235,7 +235,8 @@ def train_main():
             model.train()
             train_loss_epoch = 0.0
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
-            for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
+            progress_bar = tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False)
+            for images, labels in progress_bar:
                 images, labels = images.to(device), labels.to(device)
                 images, labels = all_mix_augmentations.forward(images, labels)
                 optimizer.zero_grad()
@@ -244,6 +245,7 @@ def train_main():
                 loss.backward()
                 optimizer.step()
                 train_loss_epoch += loss.item()
+                progress_bar.set_postfix(ce_loss=f"{loss.item():.4f}", lr=f"{optimizer.param_groups[0]['lr']:.1e}")
             avg_train_loss_epoch = train_loss_epoch / len(train_loader)
 
             model.eval()
