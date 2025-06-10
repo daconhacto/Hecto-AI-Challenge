@@ -49,6 +49,7 @@ CFG = {
         '/home/sh/hecto/best_ensemble_models_3/convnext(1218)_fold1/convnext(1218)_fold1.pth',
         '/home/sh/hecto/best_ensemble_models_3/EVA_large(12139)_fold1/EVA_large(12139)_fold1.pth'
     ], # 반드시 TEACHER_MODEL_WORKDIRS와 같은 길이를 가져야 합니다!
+    "USE_SOFTMAX_TO_WEIGHING": True,
 
     # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
     "WRONG_THRESHOLD": 0.7,
@@ -330,7 +331,8 @@ def train_main():
                     weights = inv_losses / inv_losses.sum()
 
                     # (또는 방법 2: softmax로 안정적인 weight 분포 유도)
-                    # weights = torch.softmax(-loss_array, dim=0)
+                    if CFG['USE_SOFTMAX_TO_WEIGHING']:
+                        weights = torch.softmax(-loss_array, dim=0)
 
                     # 3. weighted sum of teacher outputs
                     teacher_logits = sum(w * out for w, out in zip(weights, teacher_outputs_list))
