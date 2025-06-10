@@ -1,28 +1,24 @@
 import os
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
+import pprint
 import random
-import pandas as pd
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 import json # class_names 저장을 위해 추가
 from sklearn.model_selection import StratifiedKFold
 import torch
-from torch.utils.data import Dataset, DataLoader
-import timm
+from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torchvision.transforms import v2
 import torch.nn.functional as F
-from torch import nn, optim
 from sklearn.metrics import log_loss
 from collections import defaultdict
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import collections.abc  # for checking if transform is callable
 from augmentations import *
-from dataset import *
 from utils import *
+from dataset import *
 from model import *
 
 # Device Setting
@@ -30,8 +26,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/train',
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/logging_test',
+    "ROOT": '/home/sh/hecto/hecto_datasets/train_v1+v3',
+    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/proxy_anchor_test',
 
     # retraining 설정
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
@@ -41,46 +37,38 @@ CFG = {
     "WRONG_THRESHOLD": 0.7,
     "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
 
-    # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
-    "CUTMIX": {
-        'enable': True,
-        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
-    },
-    "MIXUP": {
-        'enable': True,
-        'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
-    },
-
-    # --- 새로운 Mosaic 관련 설정 ---
-    'APPLY_MOSAIC_GROUP_P': 1, # Mosaic 계열(Half 또는 Standard) 증강을 적용할 전체 확률
-    'HALF_MOSAIC_ENABLED': True,    # Half-Mosaic 사용 여부 (마스터 스위치)
-    'STANDARD_MOSAIC_ENABLED': False,  # Standard (4-cell) Mosaic 사용 여부 (마스터 스위치)
-                                     # 기존 HALF_MOSAIC_P, MOSAIC_P는 이 로직에서 사용되지 않음
-    # --------------------------------
-
-    "CUTOUT": {
-        'enable': False,
-        'params':{
-            'mask_size': 32
-        }
-    },
+    # curriculum learning 관련 설정
+    "RANDAUG_RANGE": (3, 9),
+    "RANDAUG_NUM_OPS": 3,
+    #################
 
     # 기타 설정값들
-    'IMG_SIZE': 448, # Number or Tuple(Height, Width)
+    'IMG_SIZE': 512, # Number or Tuple(Height, Width)
     'BATCH_SIZE': 32, # 학습 시 배치 크기
-    'EPOCHS': 25,
+    'EPOCHS': 40,
     'SEED' : 42,
-    'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
+    # 'MODEL_NAME': 'convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384', # 사용할 모델 이름
+    'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384',
     'N_FOLDS': 5,
-    'EARLY_STOPPING_PATIENCE': 3,
-    'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
+    'EARLY_STOPPING_PATIENCE': 5,
+    'RUN_SINGLE_FOLD': False,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
     
 
     # 새롭게 추가된 logging파트. class의 경우 무조건 풀경로로 적어야합니다. nn.CrossEntropyLoss 처럼 적으면 오류남
-    'LOSS': {
+    'CE_LOSS': {
         'class': 'torch.nn.CrossEntropyLoss',
         'params': {}   
+    },
+    'PROXY_LOSS': {
+        'class': 'pytorch_metric_learning.losses.ProxyAnchorLoss',
+        'params': {}   
+    },
+    'LOSS_OPTIMIZER': {
+        'class': 'torch.optim.AdamW',
+        'params': {
+            'lr': 1e-2 # 논문 기준 모델보다 100배 큰 lr 사용
+        }
     },
     'OPTIMIZER': {
         'class': 'torch.optim.AdamW',
@@ -90,34 +78,55 @@ CFG = {
         }
     },
     'SCHEDULER': {
-        'class': 'torch.optim.lr_scheduler.ReduceLROnPlateau',
+        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
         'params': {
-            'mode': 'min',
-            'factor': 0.1,
-            'patience':2
+            'T_max': 40,
+            'eta_min': 1e-7
         }
     },
+    'LOSS_SCHEDULER': {
+        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
+        'params': {
+            'T_max': 40,
+            'eta_min': 1e-5
+        }
+    }
 }
 
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
-# --- Albumentations 기반 이미지 변환 정의 ---
-train_transform = A.Compose([
-    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
-    A.HorizontalFlip(p=0.5),
-    A.Rotate(limit=15, p=0.5),
-    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
-    A.Affine(translate_percent=(0.1, 0.1), scale=(0.9, 1.1), shear=10, rotate=0, p=0.5),
-    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
+# 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
+train_transform = transforms.Compose([
+    transforms.RandomResizedCrop((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]), interpolation=transforms.InterpolationMode.BICUBIC),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=3, interpolation=transforms.InterpolationMode.BICUBIC), # 
+    transforms.ToTensor(),
+    transforms.RandomErasing(p=0.3, scale=(0.02, 0.1), ratio=(0.3, 3.3)),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-val_transform = A.Compose([
-    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
-    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
+val_transform = transforms.Compose([ # inf.py의 test_transform과 동일해야 함
+    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-similarity_map = get_similarity_map()
+def get_randaugment_curriculum_transform(epoch, total_epochs, start, end):
+    # magnitude를 start ~ end사이에서 선형증가
+    magnitude = int(start + ((end-start) * epoch / total_epochs))  # 3 ~ 9 사이
+    print(f"[Epoch {epoch}] RandAugment Magnitude: {magnitude}")
+    
+    transform = T.Compose([
+        transforms.RandomResizedCrop((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]), interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=magnitude, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.ToTensor(),
+        transforms.RandomErasing(p=0.3, scale=(0.02, 0.1), ratio=(0.3, 3.3)),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    return transform
+
+def get_alpha(epoch, total_epochs, start, end):
+    return start + (epoch / total_epochs) * (end - start)  # 0.1 → 1.0 선형 증가
 
 
 def train_main():
@@ -131,6 +140,10 @@ def train_main():
     # hyperparameter 저장
     with open(os.path.join(work_dir, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(CFG, f, indent=4, ensure_ascii=False)
+    with open(os.path.join(work_dir, "CFG.py"), "w") as f:
+        f.write("CFG = ")
+        pprint.pprint(CFG, stream=f)
+    
     
     # transform setting 저장
     save_transform(train_transform, os.path.join(work_dir, "train_transform.json"))
@@ -158,25 +171,6 @@ def train_main():
     class_names = initial_dataset.classes
     num_classes = len(class_names)
     print(f"클래스: {class_names} (총 {num_classes}개)")
-
-    # cutmix or mixup transform settings
-    if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
-        cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
-        mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
-        cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
-        print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG['CUTMIX']['enable']:
-        cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
-        print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
-    elif CFG["MIXUP"]['enable']:
-        cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
-        print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
-    else:
-        cutmix_or_mixup = None
-
-    # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
-    target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT"]
-    selected_augmentations = [i for i in target_augmentations if CFG[i]]
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
     wrong_save_path = os.path.join(work_dir, "wrong_examples")
@@ -222,7 +216,7 @@ def train_main():
         val_loader = DataLoader(val_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=False, num_workers=2, pin_memory=True)
         print(f"Fold {fold_num}: Train images: {len(train_dataset_fold)}, Validation images: {len(val_dataset_fold)}")
 
-        model = CustomTimmModel(model_name=CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
+        model = FineGrainedModel(model_name=CFG['MODEL_NAME'], num_classes=num_classes).to(device)
         model_path = CFG['START_FROM']
         if model_path and os.path.exists(model_path):
             model.load_state_dict(torch.load(model_path, map_location=device))
@@ -231,9 +225,12 @@ def train_main():
         else:
             print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
         
-        criterion = get_class_from_string(CFG['LOSS']['class'])(**CFG['LOSS']['params'])
+        ce_loss = get_class_from_string(CFG['CE_LOSS']['class'])(**CFG['CE_LOSS']['params'])
+        proxy_loss = get_class_from_string(CFG['PROXY_LOSS']['class'])(num_classes=num_classes, embedding_size=model.feature_dim, **CFG['PROXY_LOSS']['params']).to(torch.device('cuda'))
         optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
+        loss_optimizer = get_class_from_string(CFG['LOSS_OPTIMIZER']['class'])(proxy_loss.parameters(), **CFG['LOSS_OPTIMIZER']['params'])
         scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
+        loss_scheduler = get_class_from_string(CFG['LOSS_SCHEDULER']['class'])(loss_optimizer, **CFG['LOSS_SCHEDULER']['params'])
 
         best_logloss_fold = float('inf')
         current_fold_best_model_path = None
@@ -243,39 +240,34 @@ def train_main():
         for epoch in range(CFG['EPOCHS']):
             model.train()
             train_loss_epoch = 0.0
+
+            # curriculum learning
+            train_loader.dataset.transform = get_randaugment_curriculum_transform(epoch, CFG['EPOCHS'], *CFG['RANDAUG_RANGE']) # 에폭이 진행되는 것에 맞춰서 train augmentation 강화
+
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
-            for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
+            train_loss_epoch = 0.0
+            total_samples = 0
+            progress_bar = tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False)
+            for images, labels in progress_bar:
                 images, labels = images.to(device), labels.to(device)
-
-                if selected_augmentations:
-                    choice = random.choice(selected_augmentations)
-                else:
-                    choice = None
-                    
-                # cutout을 위해 추가
-                if CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
-                    images = apply_cutout(images, **CFG['CUTOUT']['params'])
-                
-                # cutmix mixup을 위해 추가
-                if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
-                    images, labels = cutmix_or_mixup(images, labels)
-                
-                images, labels = mosaic_selector(
-                    images, labels,
-                    class_names, similarity_map, 
-                    num_classes, CFG
-                )
-
                 optimizer.zero_grad()
-                outputs = model(images)
-                loss = criterion(outputs, labels)
+                outputs, features = model(images, labels)
+
+                ce_loss_value = ce_loss(outputs, labels)
+                proxy_loss_value = proxy_loss(features, labels)
+                loss = ce_loss_value + proxy_loss_value
                 loss.backward()
+
+                loss_optimizer.step()
                 optimizer.step()
                 train_loss_epoch += loss.item()
+
+                progress_bar.set_postfix(ce_loss=f"{ce_loss_value.item():.4f}", proxy_loss=f"{proxy_loss_value.item():.4f}")
             avg_train_loss_epoch = train_loss_epoch / len(train_loader)
 
             model.eval()
-            val_loss_epoch = 0.0
+            ce_val_loss_epoch = 0.0
+            proxy_val_loss_epoch = 0.0
             correct_epoch = 0
             total_epoch = 0
             all_probs_epoch = []
@@ -284,9 +276,11 @@ def train_main():
             with torch.no_grad():
                 for images, labels, img_paths in tqdm(val_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Validation", leave=False):
                     images, labels = images.to(device), labels.to(device)
-                    outputs = model(images)
-                    loss = criterion(outputs, labels)
-                    val_loss_epoch += loss.item()
+                    outputs, features = model(images, labels)
+                    ce_loss_value = ce_loss(outputs, labels)
+                    ce_val_loss_epoch += ce_loss_value.item()
+                    proxy_loss_value = proxy_loss(features, labels)
+                    proxy_val_loss_epoch += proxy_loss_value.item()
                     _, preds = torch.max(outputs, 1)
                     correct_epoch += (preds == labels).sum().item()
                     total_epoch += labels.size(0)
@@ -319,7 +313,8 @@ def train_main():
                 with open(os.path.join(wrong_save_path, f"Fold_{fold_num}_Epoch_{epoch+1}_wrong_examples.json"), "w", encoding="utf-8") as f:
                     json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
                     
-            avg_val_loss_epoch = val_loss_epoch / len(val_loader) if len(val_loader) > 0 else float('inf')
+            ce_avg_val_loss_epoch = ce_val_loss_epoch / len(val_loader) if len(val_loader) > 0 else float('inf')
+            proxy_avg_val_loss_epoch = proxy_val_loss_epoch / len(val_loader) if len(val_loader) > 0 else float('inf')
             val_accuracy_epoch = 100 * correct_epoch / total_epoch if total_epoch > 0 else 0
             val_logloss_epoch = log_loss(all_labels_epoch, all_probs_epoch, labels=list(range(num_classes))) if total_epoch > 0 and len(np.unique(all_labels_epoch)) > 1 else float('inf')
 
@@ -327,8 +322,12 @@ def train_main():
                 scheduler.step(val_logloss_epoch)
             else:
                 scheduler.step()
+            if CFG['LOSS_SCHEDULER']['class'] == 'torch.optim.lr_scheduler.ReduceLROnPlateau':
+                loss_scheduler.step(val_logloss_epoch)
+            else:
+                loss_scheduler.step()
             current_lr = optimizer.param_groups[0]['lr']
-            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
+            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | CE Valid Loss: {ce_avg_val_loss_epoch:.4f} | PROXY Valid Loss: {proxy_avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
 
             if val_logloss_epoch < best_logloss_fold:
                 best_logloss_fold = val_logloss_epoch

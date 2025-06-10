@@ -1,7 +1,7 @@
 import os
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
-import pprint
 import random
 import pandas as pd
 import numpy as np
@@ -20,9 +20,10 @@ from sklearn.metrics import log_loss
 from collections import defaultdict
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import collections.abc  # for checking if transform is callable
 from augmentations import *
-from utils import *
 from dataset import *
+from utils import *
 from model import *
 
 # Device Setting
@@ -30,8 +31,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto_dataset_test/train_original',
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/june_code_latest_version/work_dir/convnext_1084_5fold_training',
+    "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/train',
+    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/logging_test',
 
     # retraining 설정
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
@@ -42,28 +43,22 @@ CFG = {
     "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
-    "NONE_AUGMENTATION_LIST": ["NONE", "NONE"],
-    "ALL_AUGMENTATIONS": ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"], # 여기에 정의되어 있는 것 중 True만 실제 적용. 
     "CUTMIX": {
         'enable': True,
         'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
-    },
-    "SALIENCYMIX": {
-        'enable': False,
-        'params':{'alpha':1.0, 'num_candidates':9}
     },
     "MIXUP": {
         'enable': True,
         'params':{'alpha':1.0} # alpha값 float로 정의 안하면 오류남
     },
-    "MOSAIC": {
-        'enable': True,
-        'params':{
-            'p': 1.0,
-            'grid_size': 2,
-            'use_saliency': True
-        }
-    },
+
+    # --- 새로운 Mosaic 관련 설정 ---
+    'APPLY_MOSAIC_GROUP_P': 1, # Mosaic 계열(Half 또는 Standard) 증강을 적용할 전체 확률
+    'HALF_MOSAIC_ENABLED': True,    # Half-Mosaic 사용 여부 (마스터 스위치)
+    'STANDARD_MOSAIC_ENABLED': False,  # Standard (4-cell) Mosaic 사용 여부 (마스터 스위치)
+                                     # 기존 HALF_MOSAIC_P, MOSAIC_P는 이 로직에서 사용되지 않음
+    # --------------------------------
+
     "CUTOUT": {
         'enable': False,
         'params':{
@@ -72,14 +67,14 @@ CFG = {
     },
 
     # 기타 설정값들
-    'IMG_SIZE': 640, # Number or Tuple(Height, Width)
+    'IMG_SIZE': 448, # Number or Tuple(Height, Width)
     'BATCH_SIZE': 32, # 학습 시 배치 크기
-    'EPOCHS': 35,
+    'EPOCHS': 25,
     'SEED' : 42,
     'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
     'N_FOLDS': 5,
     'EARLY_STOPPING_PATIENCE': 3,
-    'RUN_SINGLE_FOLD': False,  # True로 설정 시 특정 폴드만 실행
+    'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
     
 
@@ -96,10 +91,11 @@ CFG = {
         }
     },
     'SCHEDULER': {
-        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
+        'class': 'torch.optim.lr_scheduler.ReduceLROnPlateau',
         'params': {
-            'T_max': 35,
-            'eta_min': 1e-6
+            'mode': 'min',
+            'factor': 0.1,
+            'patience':2
         }
     },
 }
@@ -107,7 +103,6 @@ CFG = {
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
 # --- Albumentations 기반 이미지 변환 정의 ---
 train_transform = A.Compose([
-    CustomCropTransformConsiderRatio(p=0.5),
     A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
     A.HorizontalFlip(p=0.5),
     A.Rotate(limit=15, p=0.5),
@@ -123,6 +118,8 @@ val_transform = A.Compose([
     ToTensorV2()
 ])
 
+similarity_map = get_similarity_map()
+
 
 def train_main():
     # work directory 생성
@@ -135,10 +132,6 @@ def train_main():
     # hyperparameter 저장
     with open(os.path.join(work_dir, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(CFG, f, indent=4, ensure_ascii=False)
-    with open(os.path.join(work_dir, "CFG.py"), "w") as f:
-        f.write("CFG = ")
-        pprint.pprint(CFG, stream=f)
-    
     
     # transform setting 저장
     save_transform(train_transform, os.path.join(work_dir, "train_transform.json"))
@@ -166,6 +159,25 @@ def train_main():
     class_names = initial_dataset.classes
     num_classes = len(class_names)
     print(f"클래스: {class_names} (총 {num_classes}개)")
+
+    # cutmix or mixup transform settings
+    if CFG['CUTMIX']['enable'] and CFG["MIXUP"]['enable']:
+        cutmix = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+        mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
+        cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
+        print("매 배치마다 CUTMIX와 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
+    elif CFG['CUTMIX']['enable']:
+        cutmix_or_mixup = v2.CutMix(num_classes=num_classes, **CFG['CUTMIX']['params'])
+        print("매 배치마다 CUTMIX를 랜덤하게 적용합니다. CFG를 확인하세요.")
+    elif CFG["MIXUP"]['enable']:
+        cutmix_or_mixup = v2.MixUp(num_classes=num_classes, **CFG['MIXUP']['params'])
+        print("매 배치마다 MIXUP을 랜덤하게 적용합니다. CFG를 확인하세요.")
+    else:
+        cutmix_or_mixup = None
+
+    # 복잡한 augmentation의 경우 여러개 선택 시 하나만 적용하기 위한 list
+    target_augmentations = ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT"]
+    selected_augmentations = [i for i in target_augmentations if CFG[i]]
     
     # 모델이 잘못 분류한 예시를 저장하기 위한 폴더 생성
     wrong_save_path = os.path.join(work_dir, "wrong_examples")
@@ -177,8 +189,6 @@ def train_main():
         json.dump(class_names, f)
     print(f"Saved class_names to class_names.json")
 
-    # mix augmentation 종합 클래스 정의
-    all_mix_augmentations = RandomMixAugmentation(CFG, num_classes=num_classes)
 
     skf = StratifiedKFold(n_splits=CFG['N_FOLDS'], shuffle=True, random_state=CFG['SEED'])
     overall_best_logloss = float('inf')
@@ -235,17 +245,34 @@ def train_main():
             model.train()
             train_loss_epoch = 0.0
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
-            progress_bar = tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False)
-            for images, labels in progress_bar:
+            for images, labels in tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False):
                 images, labels = images.to(device), labels.to(device)
-                images, labels = all_mix_augmentations.forward(images, labels)
+
+                if selected_augmentations:
+                    choice = random.choice(selected_augmentations)
+                else:
+                    choice = None
+                    
+                # cutout을 위해 추가
+                if CFG['CUTOUT']['enable'] and choice == 'CUTOUT':
+                    images = apply_cutout(images, **CFG['CUTOUT']['params'])
+                
+                # cutmix mixup을 위해 추가
+                if cutmix_or_mixup and (choice == 'MIXUP' or choice == 'CUTMIX'):
+                    images, labels = cutmix_or_mixup(images, labels)
+                
+                images, labels = mosaic_selector(
+                    images, labels,
+                    class_names, similarity_map, 
+                    num_classes, CFG
+                )
+
                 optimizer.zero_grad()
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
                 train_loss_epoch += loss.item()
-                progress_bar.set_postfix(ce_loss=f"{loss.item():.4f}", lr=f"{optimizer.param_groups[0]['lr']:.1e}")
             avg_train_loss_epoch = train_loss_epoch / len(train_loader)
 
             model.eval()

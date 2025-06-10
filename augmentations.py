@@ -514,54 +514,38 @@ def random_half_mosaic(
     return out_images, out_labels
 
 
-
-def half_crop(image, mode=None):
-    H, W, _ = image.shape
-    if mode == 'top':
-        return image[:H//2, :, :]
-    elif mode == 'bottom':
-        return image[H//2:, :, :]
-    elif mode == 'left':
-        return image[:, :W//2, :]
-    elif mode == 'right':
-        return image[:, W//2:, :]
-    else:
-        return image  # no crop
-
-class CustomCropTransform:
-    def __init__(self, p=1.0, mode=None):
-        self.mode = mode
-        self.p = p
-
-    def __call__(self, image, **kwargs):
-        mode = self.mode if self.mode else random.choice(['top', 'bottom', 'left', 'right'])
-        if random.random() < self.p:
-            return image
-        return half_crop(image, mode)
-
 # CustomCropTransform에서 이미지 비율에 따라 위/아래, 왼/옆 자르기 모드를 나누는 클래스
-# 성능이 더 좋으면 이걸로 통합 예정 ㅇㅇ
-class CustomCropTransformConsiderRatio:
-    def __init__(self, p=1.0, mode=None):
+class CustomCropTransformConsiderRatio(A.ImageOnlyTransform):
+    def __init__(self, always_apply=False, p=1.0, mode=None, consider_ratio=True):
         self.mode = mode
-        self.p = p
+        self.consider_ratio = consider_ratio
+        super().__init__(always_apply, p)
 
-    def __call__(self, image, **kwargs):
-        if random.random() >= self.p:
-            return image
-
+    def apply(self, image, **kwargs):
         h, w = image.shape[:2]
         if self.mode:
             mode = self.mode
         else:
-            if h > w:
-                mode = random.choice(['top', 'bottom'])
-            elif w > h:
-                mode = random.choice(['left', 'right'])
+            if self.consider_ratio:
+                if h > w:
+                    mode = random.choice(['top', 'bottom'])
+                elif w > h:
+                    mode = random.choice(['left', 'right'])
+                else:
+                    mode = random.choice(['top', 'bottom', 'left', 'right'])
             else:
-                mode = random.choice(['top', 'bottom', 'left', 'right'])
+                mode = self.mode if self.mode else random.choice(['top', 'bottom', 'left', 'right'])
 
-        return half_crop(image, mode)
+        if mode == 'top':
+            return image[:h//2, :, :]
+        elif mode == 'bottom':
+            return image[h//2:, :, :]
+        elif mode == 'left':
+            return image[:, :w//2, :]
+        elif mode == 'right':
+            return image[:, w//2:, :]
+        else:
+            return image  # no crop
 
 
 def mosaic_selector(

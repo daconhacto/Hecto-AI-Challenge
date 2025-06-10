@@ -1,21 +1,31 @@
+# 미리 생성해둔 logit.csv들을 통해 KD를 수행.
+# 미리 생성해둔 걸로 수행하기 때문에 augmentation을 사용할 수 없음에 주의
+
 import os
+import gc
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import pprint
 import random
+import pandas as pd
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 import json # class_names 저장을 위해 추가
 from sklearn.model_selection import StratifiedKFold
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms.functional as TF
+import timm
 import torchvision.transforms as transforms
 from torchvision.transforms import v2
 import torch.nn.functional as F
+from torch import nn, optim
 from sklearn.metrics import log_loss
 from collections import defaultdict
-from augmentations import *
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from utils import *
 from dataset import *
 from model import *
@@ -25,49 +35,43 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "ROOT": '/home/sh/hecto/hecto_datasets/train_v1+v3',
-    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/proxy_anchor_test',
+    "WORK_DIR": '/home/sh/hecto/KD_test_folder/work_dirs/offline_KD_test_1', # train.py로 생성된 work_directory
+    "ROOT": '/home/sh/hecto/hecto_datasets/train_v1+v3', # data_path
+    "START_FROM": None,
 
-    # retraining 설정
-    "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
-    "GROUP_PATH": None, # 만약 None이 아닌 group.json의 경로르 입력하면 해당 class들만 활용하여 train을 진행함
-    
-    # wrong example을 뽑을 threshold 조건. threshold 이하인 confidence를 가지는 케이스를 저장.
-    "WRONG_THRESHOLD": 0.7,
-    "GROUP_JSON_START_EPOCH": 5, # work_dir에 해당 에폭부터의 wrong_examples를 통합한 json파일을 저장하게됩니다.
+    # 반드시 제공되어야함. 현재 모델이 반드시 workdir 폴더 아래에 위치해 있는 게 보장은 안되는 거 같긴 한데
+    # 일단 settings.json에서 모델명, 이미지 사이즈만 뽑아오는거고, 다른 정보는 사용하진 않아서 괜찮을듯 함
+    "TEACHER_MODEL_LOGITS_CSVS": [
+        '/home/sh/hecto/best_ensemble_models_3/1089/train_logits.csv',
+        '/home/sh/hecto/best_ensemble_models_3/convnext(1218)_fold1/train_logits.csv',
+        '/home/sh/hecto/best_ensemble_models_3/EVA_large(12139)_fold1/train_logits.csv'
+    ],
+    "TEACHER_VAL_LOSSES": [
+        0.1089,
+        0.1218,
+        0.12139
+    ],
 
-    # curriculum learning 관련 설정
-    "RANDAUG_RANGE": (3, 9),
-    "RANDAUG_NUM_OPS": 3,
-    #################
-
-    # 기타 설정값들
-    'IMG_SIZE': 512, # Number or Tuple(Height, Width)
+    'IMG_SIZE': 512,
     'BATCH_SIZE': 32, # 학습 시 배치 크기
-    'EPOCHS': 40,
+    'EPOCHS': 30,
     'SEED' : 42,
-    # 'MODEL_NAME': 'convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384', # 사용할 모델 이름
-    'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384',
+    'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
     'N_FOLDS': 5,
-    'EARLY_STOPPING_PATIENCE': 5,
-    'RUN_SINGLE_FOLD': False,  # True로 설정 시 특정 폴드만 실행
+    'EARLY_STOPPING_PATIENCE': 3,
+    'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
     'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
     
-
+    # KD LOSS
+    'KD_PARAMS': {
+        'alpha': 0.7,
+        'temperature': 4.0
+    },
+    
     # 새롭게 추가된 logging파트. class의 경우 무조건 풀경로로 적어야합니다. nn.CrossEntropyLoss 처럼 적으면 오류남
-    'CE_LOSS': {
+    'LOSS': {
         'class': 'torch.nn.CrossEntropyLoss',
         'params': {}   
-    },
-    'PROXY_LOSS': {
-        'class': 'pytorch_metric_learning.losses.ProxyAnchorLoss',
-        'params': {}   
-    },
-    'LOSS_OPTIMIZER': {
-        'class': 'torch.optim.AdamW',
-        'params': {
-            'lr': 1e-2 # 논문 기준 모델보다 100배 큰 lr 사용
-        }
     },
     'OPTIMIZER': {
         'class': 'torch.optim.AdamW',
@@ -79,53 +83,42 @@ CFG = {
     'SCHEDULER': {
         'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
         'params': {
-            'T_max': 40,
+            'T_max': 30,
             'eta_min': 1e-7
         }
     },
-    'LOSS_SCHEDULER': {
-        'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
-        'params': {
-            'T_max': 40,
-            'eta_min': 1e-5
-        }
-    }
 }
 
+# --- Albumentations 기반 이미지 변환 정의 ---
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
-# 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
-train_transform = transforms.Compose([
-    transforms.RandomResizedCrop((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]), interpolation=transforms.InterpolationMode.BICUBIC),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=3, interpolation=transforms.InterpolationMode.BICUBIC), # 
-    transforms.ToTensor(),
-    transforms.RandomErasing(p=0.3, scale=(0.02, 0.1), ratio=(0.3, 3.3)),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+train_transform = A.Compose([
+    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
+    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ToTensorV2()
 ])
 
-val_transform = transforms.Compose([ # inf.py의 test_transform과 동일해야 함
-    transforms.Resize((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1])),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+val_transform = A.Compose([
+    A.Resize(CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]),
+    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ToTensorV2()
 ])
 
-def get_randaugment_curriculum_transform(epoch, total_epochs, start, end):
-    # magnitude를 start ~ end사이에서 선형증가
-    magnitude = int(start + ((end-start) * epoch / total_epochs))  # 3 ~ 9 사이
-    print(f"[Epoch {epoch}] RandAugment Magnitude: {magnitude}")
-    
-    transform = T.Compose([
-        transforms.RandomResizedCrop((CFG['IMG_SIZE'][0], CFG['IMG_SIZE'][1]), interpolation=transforms.InterpolationMode.BICUBIC),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandAugment(num_ops=CFG['RANDAUG_NUM_OPS'], magnitude=magnitude, interpolation=transforms.InterpolationMode.BICUBIC),
-        transforms.ToTensor(),
-        transforms.RandomErasing(p=0.3, scale=(0.02, 0.1), ratio=(0.3, 3.3)),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    return transform
 
-def get_alpha(epoch, total_epochs, start, end):
-    return start + (epoch / total_epochs) * (end - start)  # 0.1 → 1.0 선형 증가
+def loss_fn_kd(outputs, labels, teacher_outputs, params):
+    """
+    Compute the knowledge-distillation (KD) loss given outputs, labels.
+    "Hyperparameters": temperature and alpha
+
+    NOTE: the KL Divergence for PyTorch comparing the softmaxs of teacher
+    and student expects the input tensor to be log probabilities! See Issue #2
+    """
+    alpha = params['alpha']
+    T = params['temperature']
+    KD_loss = nn.KLDivLoss()(F.log_softmax(outputs/T, dim=1),
+                             F.softmax(teacher_outputs/T, dim=1)) * (alpha * T * T) + \
+              F.cross_entropy(outputs, labels) * (1. - alpha)
+
+    return KD_loss
 
 
 def train_main():
@@ -142,12 +135,15 @@ def train_main():
     with open(os.path.join(work_dir, "CFG.py"), "w") as f:
         f.write("CFG = ")
         pprint.pprint(CFG, stream=f)
-    
-    
+
     # transform setting 저장
     save_transform(train_transform, os.path.join(work_dir, "train_transform.json"))
     save_transform(val_transform, os.path.join(work_dir, "val_transform.json"))
     
+    # teacher model 정보 가져오기
+    teacher_logits_dfs = []
+    for logits_path in CFG['TEACHER_MODEL_LOGITS_CSVS']:
+        teacher_logits_dfs.append(pd.read_csv(logits_path))
     
     print("Using device:", device)
     print(f"Using model: {CFG['MODEL_NAME']}")
@@ -181,7 +177,6 @@ def train_main():
         json.dump(class_names, f)
     print(f"Saved class_names to class_names.json")
 
-
     skf = StratifiedKFold(n_splits=CFG['N_FOLDS'], shuffle=True, random_state=CFG['SEED'])
     overall_best_logloss = float('inf')
     overall_best_model_path = ""
@@ -197,39 +192,27 @@ def train_main():
 
         train_samples_fold = [all_samples[i] for i in train_indices]
         val_samples_fold = [all_samples[i] for i in val_indices]
-        train_dataset_fold = FoldSpecificDataset(train_samples_fold, image_size = CFG['IMG_SIZE'], transform=train_transform)
+        train_dataset_fold = KnowledgeDistillationDataset(train_samples_fold, 
+                                                          image_size = CFG['IMG_SIZE'], 
+                                                          transform=train_transform, 
+                                                          teacher_logits_list=teacher_logits_dfs, teacher_val_scores=CFG['TEACHER_VAL_LOSSES'])
         val_dataset_fold = FoldSpecificDataset(val_samples_fold, image_size = CFG['IMG_SIZE'], transform=val_transform, is_train=False)
-
-        # group_path가 설정되어 있으면 해당 class들로만 훈련을 진행
-        # group 로드
-        if CFG['GROUP_PATH']:
-            with open(CFG['GROUP_PATH'], 'r') as f:
-                wrong_example_group = json.load(f)
-            wrong_example_group = convert_classname_groups_to_index_groups(wrong_example_group, class_names)
-            # difficult example sampling을 위한 전처리 과정
-            label_to_indices = build_class_index_map(train_samples_fold)
-            sampler = GroupedBatchSampler(label_to_indices, wrong_example_group, CFG['BATCH_SIZE'])
-            train_loader = DataLoader(train_dataset_fold, num_workers=2, pin_memory=True, batch_sampler=sampler)
-        else:
-            train_loader = DataLoader(train_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=True, num_workers=2, pin_memory=True)
+        train_loader = DataLoader(train_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=True, num_workers=2, pin_memory=True)
         val_loader = DataLoader(val_dataset_fold, batch_size=CFG['BATCH_SIZE'], shuffle=False, num_workers=2, pin_memory=True)
         print(f"Fold {fold_num}: Train images: {len(train_dataset_fold)}, Validation images: {len(val_dataset_fold)}")
 
-        model = FineGrainedModel(model_name=CFG['MODEL_NAME'], num_classes=num_classes).to(device)
+        student_model = CustomTimmModel(model_name=CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
         model_path = CFG['START_FROM']
         if model_path and os.path.exists(model_path):
-            model.load_state_dict(torch.load(model_path, map_location=device))
+            student_model.load_state_dict(torch.load(model_path, map_location=device))
             print(f"{model_path} 모델을 불러와 해당 체크포인트부터 학습을 재개합니다. CFG를 확인해주세요.")
             print(f"Loaded model from {model_path}")
         else:
             print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
         
-        ce_loss = get_class_from_string(CFG['CE_LOSS']['class'])(**CFG['CE_LOSS']['params'])
-        proxy_loss = get_class_from_string(CFG['PROXY_LOSS']['class'])(num_classes=num_classes, embedding_size=model.feature_dim, **CFG['PROXY_LOSS']['params']).to(torch.device('cuda'))
-        optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
-        loss_optimizer = get_class_from_string(CFG['LOSS_OPTIMIZER']['class'])(proxy_loss.parameters(), **CFG['LOSS_OPTIMIZER']['params'])
+        criterion = get_class_from_string(CFG['LOSS']['class'])(**CFG['LOSS']['params'])
+        optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(student_model.parameters(), **CFG['OPTIMIZER']['params'])
         scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
-        loss_scheduler = get_class_from_string(CFG['LOSS_SCHEDULER']['class'])(loss_optimizer, **CFG['LOSS_SCHEDULER']['params'])
 
         best_logloss_fold = float('inf')
         current_fold_best_model_path = None
@@ -237,36 +220,23 @@ def train_main():
         best_val_loss_for_early_stopping = float('inf')
 
         for epoch in range(CFG['EPOCHS']):
-            model.train()
+            student_model.train()
             train_loss_epoch = 0.0
-
-            # curriculum learning
-            train_loader.dataset.transform = get_randaugment_curriculum_transform(epoch, CFG['EPOCHS'], *CFG['RANDAUG_RANGE']) # 에폭이 진행되는 것에 맞춰서 train augmentation 강화
-
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
-            train_loss_epoch = 0.0
-            total_samples = 0
             progress_bar = tqdm(train_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Training", leave=False)
-            for images, labels in progress_bar:
-                images, labels = images.to(device), labels.to(device)
+            for images, labels, teacher_logits in progress_bar:
+                images, labels, teacher_logits = images.to(device), labels.to(device), teacher_logits.to(device)
                 optimizer.zero_grad()
-                outputs, features = model(images, labels)
-
-                ce_loss_value = ce_loss(outputs, labels)
-                proxy_loss_value = proxy_loss(features, labels)
-                loss = ce_loss_value + proxy_loss_value
+                outputs = student_model(images)
+                loss = loss_fn_kd(outputs, labels, teacher_logits, params=CFG['KD_PARAMS'])
                 loss.backward()
-
-                loss_optimizer.step()
                 optimizer.step()
                 train_loss_epoch += loss.item()
-
-                progress_bar.set_postfix(ce_loss=f"{ce_loss_value.item():.4f}", proxy_loss=f"{proxy_loss_value.item():.4f}")
+                progress_bar.set_postfix(total_loss=f"{loss.item():.4f}", lr=f"{optimizer.param_groups[0]['lr']:.1e}")
             avg_train_loss_epoch = train_loss_epoch / len(train_loader)
 
-            model.eval()
-            ce_val_loss_epoch = 0.0
-            proxy_val_loss_epoch = 0.0
+            student_model.eval()
+            val_loss_epoch = 0.0
             correct_epoch = 0
             total_epoch = 0
             all_probs_epoch = []
@@ -275,11 +245,9 @@ def train_main():
             with torch.no_grad():
                 for images, labels, img_paths in tqdm(val_loader, desc=f"[Fold {fold_num} Epoch {epoch+1}/{CFG['EPOCHS']}] Validation", leave=False):
                     images, labels = images.to(device), labels.to(device)
-                    outputs, features = model(images, labels)
-                    ce_loss_value = ce_loss(outputs, labels)
-                    ce_val_loss_epoch += ce_loss_value.item()
-                    proxy_loss_value = proxy_loss(features, labels)
-                    proxy_val_loss_epoch += proxy_loss_value.item()
+                    outputs = student_model(images)
+                    loss = criterion(outputs, labels)
+                    val_loss_epoch += loss.item()
                     _, preds = torch.max(outputs, 1)
                     correct_epoch += (preds == labels).sum().item()
                     total_epoch += labels.size(0)
@@ -312,8 +280,7 @@ def train_main():
                 with open(os.path.join(wrong_save_path, f"Fold_{fold_num}_Epoch_{epoch+1}_wrong_examples.json"), "w", encoding="utf-8") as f:
                     json.dump(wrong_img_dict, f, indent=4, ensure_ascii=False)
                     
-            ce_avg_val_loss_epoch = ce_val_loss_epoch / len(val_loader) if len(val_loader) > 0 else float('inf')
-            proxy_avg_val_loss_epoch = proxy_val_loss_epoch / len(val_loader) if len(val_loader) > 0 else float('inf')
+            avg_val_loss_epoch = val_loss_epoch / len(val_loader) if len(val_loader) > 0 else float('inf')
             val_accuracy_epoch = 100 * correct_epoch / total_epoch if total_epoch > 0 else 0
             val_logloss_epoch = log_loss(all_labels_epoch, all_probs_epoch, labels=list(range(num_classes))) if total_epoch > 0 and len(np.unique(all_labels_epoch)) > 1 else float('inf')
 
@@ -321,17 +288,13 @@ def train_main():
                 scheduler.step(val_logloss_epoch)
             else:
                 scheduler.step()
-            if CFG['LOSS_SCHEDULER']['class'] == 'torch.optim.lr_scheduler.ReduceLROnPlateau':
-                loss_scheduler.step(val_logloss_epoch)
-            else:
-                loss_scheduler.step()
             current_lr = optimizer.param_groups[0]['lr']
-            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | CE Valid Loss: {ce_avg_val_loss_epoch:.4f} | PROXY Valid Loss: {proxy_avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
+            print(f"Fold {fold_num} Epoch {epoch+1} - Train Loss: {avg_train_loss_epoch:.4f} | Valid Loss: {avg_val_loss_epoch:.4f} | Valid Acc: {val_accuracy_epoch:.2f}% | Valid LogLoss: {val_logloss_epoch:.4f} | LR: {current_lr:.1e}")
 
             if val_logloss_epoch < best_logloss_fold:
                 best_logloss_fold = val_logloss_epoch
                 current_fold_best_model_path = os.path.join(work_dir, f'best_model_{CFG["MODEL_NAME"]}_fold{fold_num}.pth')
-                torch.save(model.state_dict(), current_fold_best_model_path)
+                torch.save(student_model.state_dict(), current_fold_best_model_path)
                 print(f"Fold {fold_num} 📦 Best model saved at epoch {epoch+1} (LogLoss: {best_logloss_fold:.4f}) to {current_fold_best_model_path}")
 
             if val_logloss_epoch < best_val_loss_for_early_stopping:
@@ -377,7 +340,6 @@ def train_main():
     print(f"\nOverall Best LogLoss (among executed folds): {overall_best_logloss if overall_best_logloss != float('inf') else 'N/A'}")
     print(f"Path to the overall best model for inference: {overall_best_model_path if overall_best_model_path else 'N/A'}")
     print("Training finished.")
-
 
 if __name__ == '__main__':
     train_main()
