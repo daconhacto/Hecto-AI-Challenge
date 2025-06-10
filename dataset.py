@@ -262,6 +262,16 @@ class CurriculumDatasetWrapper(Dataset):
         self.curriculum_spec = cfg["CURRICULUM"]
         self.curriculum_mode = cfg["DO_CURRICULUM_LEARNING"]
         self.aug_lib = cfg.get("AUGMENTATION_LIBRARY", "albumentations").lower()
+        
+        img_size = cfg['IMG_SIZE'] if isinstance(cfg['IMG_SIZE'], tuple) else (cfg['IMG_SIZE'], cfg['IMG_SIZE'])
+        for aug in self.curriculum_spec:
+            if aug['class'] == 'torchvision.transforms.Resize':
+                aug['class']['params'] = {'size': img_size}
+                break
+            
+            if aug['class'] == 'albumentations.Resize':
+                aug['class']['params'] = {'height':img_size[0], 'width':img_size[1]}
+                break
 
     def __len__(self):
         return len(self.base_dataset)
