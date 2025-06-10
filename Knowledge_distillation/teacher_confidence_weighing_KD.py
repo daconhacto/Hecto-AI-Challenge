@@ -57,6 +57,7 @@ CFG = {
 
     # 해당 augmentation들은 선택된 것들 중 랜덤하게 '1개'만 적용이 됩니다(배치마다 랜덤하게 1개 선택)
     "NONE_AUGMENTATION_LIST": ["NONE", "NONE"],
+    "ALL_AUGMENTATIONS": ["CUTMIX", "MIXUP", "MOSAIC", "CUTOUT", "SALIENCYMIX"], # 여기에 정의되어 있는 것 중 True만 실제 적용. 
     "CUTMIX": {
         'enable': True,
         'params':{'alpha':1.0}
