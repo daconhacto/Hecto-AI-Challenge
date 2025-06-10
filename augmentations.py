@@ -519,7 +519,7 @@ class CustomCropTransformConsiderRatio(A.ImageOnlyTransform):
     def __init__(self, always_apply=False, p=1.0, mode=None, consider_ratio=True):
         self.mode = mode
         self.consider_ratio = consider_ratio
-        super().__init__(always_apply, p)
+        super().__init__(always_apply=always_apply, p=p)
 
     def apply(self, image, **kwargs):
         h, w = image.shape[:2]
