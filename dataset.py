@@ -7,7 +7,9 @@ import collections.abc
 import albumentations as A
 from torch.utils.data import Sampler
 import random
+from torchvision import transforms as T
 import torchvision.transforms.functional as TF
+from utils import get_class_from_string
 
 # --- InitialCustomImageDataset (초기 데이터 로드용) ---
 class InitialCustomImageDataset(Dataset):
@@ -250,3 +252,57 @@ class KnowledgeDistillationDataset(Dataset):
             logits = np.zeros(num_classes, dtype=np.float32)
 
         return image, label, logits
+
+
+class CurriculumDatasetWrapper(Dataset):
+    def __init__(self, base_dataset, cfg):
+        self.base_dataset = base_dataset
+        self.cfg = cfg
+        self.total_epochs = cfg["EPOCHS"]
+        self.curriculum_spec = cfg["CURRICULUM"]
+        self.curriculum_mode = cfg["DO_CURRICULUM_LEARNING"]
+        self.aug_lib = cfg.get("AUGMENTATION_LIBRARY", "albumentations").lower()
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        return self.base_dataset[idx]
+
+    def update_transform(self, current_epoch):
+        if not self.curriculum_mode:
+            return
+
+        transform_list = []
+
+        for t in self.curriculum_spec:
+            class_path = t["class"]
+            params = t["params"]
+
+            cls = get_class_from_string(class_path)
+
+            # 파라미터 업데이트
+            updated_params = {}
+            for key, val in params.items():
+                if isinstance(val, dict) and "s" in val and "e" in val:
+                    s, e = val["s"], val["e"]
+                    if isinstance(s, tuple):
+                        updated = tuple(np.linspace(s[i], e[i], self.total_epochs)[current_epoch] for i in range(len(s)))
+                    else:
+                        updated = float(np.linspace(s, e, self.total_epochs)[current_epoch])
+                    updated_params[key] = updated
+                else:
+                    updated_params[key] = val
+
+            transform_list.append(cls(**updated_params))
+
+        # Compose 적용
+        if self.aug_lib == "albumentations":
+            composed = A.Compose(transform_list)
+        elif self.aug_lib == "torch":
+            composed = T.Compose(transform_list)
+        else:
+            raise ValueError(f"Unsupported augmentation library: {self.aug_lib}")
+
+        # 내부 dataset의 transform 갱신
+        self.base_dataset.transform = composed
