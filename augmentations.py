@@ -521,6 +521,11 @@ class CustomCropTransformConsiderRatio(A.ImageOnlyTransform):
         self.consider_ratio = consider_ratio
         super().__init__(always_apply=always_apply, p=p)
 
+    @staticmethod
+    def get_transform_init_args_names():
+        # to_dict() 로 추출할 init 인자의 이름을 반환
+        return ("mode", "consider_ratio")
+    
     def apply(self, image, **kwargs):
         h, w = image.shape[:2]
         if self.mode:
