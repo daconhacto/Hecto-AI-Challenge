@@ -8,21 +8,23 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import torch.nn.functional as F
+import albumentations as A
 from utils import *
 from dataset import *
 from model import *
+from augmentations import *
 
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Inference Configuration
 CFG_INF = {
-    "WORK_DIR": '/home/sh/hecto/tjrgus5/work_dir/convnext_random_resize_crop+mosaic_or_mixupcutmix', # train.py로 생성된 work_directory
-    'MODEL_PATH': '/home/sh/hecto/tjrgus5/work_dir/convnext_random_resize_crop+mosaic_or_mixupcutmix/best_model_convnext_base.fb_in22k_ft_in1k_384_fold1.pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
-    'ROOT': '/home/sh/hecto/test',
-    'SUBMISSION_FILE': '/home/sh/hecto/sample_submission.csv',
+    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/final_code_latest_version/work_dir/convnext_large_1084_5fold_training', # train.py로 생성된 work_directory
+    'MODEL_PATH': '/project/ahnailab/jys0207/CP/tjrgus5/final_code_latest_version/work_dir/convnext_large_1084_5fold_training/best_model_convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384_fold1.pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
+    'ROOT': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto_dataset_test/test',
+    'SUBMISSION_FILE': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto_dataset_test/sample_submission.csv',
     'BATCH_SIZE': 64, # 추론 시 배치 크기
-    'TTA_TIMES': 4, # tta 수행 횟수
+    'TTA_TIMES': 2, # tta 수행 횟수
 }
 
 
@@ -40,10 +42,11 @@ def inference_main():
         CFG_INF['IMG_SIZE'] = tuple(CFG_INF['IMG_SIZE'])
     CFG_INF['IMG_SIZE'] = CFG_INF['IMG_SIZE'] if isinstance(CFG_INF['IMG_SIZE'], tuple) else (CFG_INF['IMG_SIZE'], CFG_INF['IMG_SIZE'])
     # 이미지 변환 정의 (val_transform은 inf.py에서도 유사하게 사용)
-    tta_transform = transforms.Compose([
-        transforms.RandomResizedCrop(size=CFG_INF['IMG_SIZE'], scale=(0.25, 1.0), ratio=(2/3, 5/3), interpolation=transforms.InterpolationMode.BICUBIC),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    tta_transform = A.Compose([
+        A.Resize(CFG_INF['IMG_SIZE'][0], CFG_INF['IMG_SIZE'][1]),
+        A.HorizontalFlip(p=0.5),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
     ])
 
     print("Using device:", device)
