@@ -519,7 +519,7 @@ class CustomCropTransformConsiderRatio(A.ImageOnlyTransform):
     def __init__(self, always_apply=False, p=1.0, mode=None, consider_ratio=True):
         self.mode = mode
         self.consider_ratio = consider_ratio
-        super().__init__(always_apply, p)
+        super().__init__(always_apply=always_apply, p=p)
 
     def apply(self, image, **kwargs):
         h, w = image.shape[:2]
@@ -1415,7 +1415,7 @@ class RandomMixAugmentation:
             images = apply_cutout(images, **self.CFG['CUTOUT']['params'])
         
         # cutmix mixup을 위해 추가
-        if self.cutmix_or_mixup:
+        if self.cutmix_or_mixup and (choice == 'CUTMIX' or choice == 'MIXUP'):
             images, labels = self.cutmix_or_mixup(images, labels)
         
         # MOSAIC을 위해 추가
