@@ -1,0 +1,10 @@
+timm
+scikit-learn
+pandas
+matplotlib
+seaborn
+scikit-image
+streamlit
+albumentations
+pytorch-metric-learning
+opencv-contrib-python
