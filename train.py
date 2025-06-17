@@ -219,6 +219,9 @@ def train_main():
         optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
         scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
 
+        model_path = CFG['START_FROM']
+        start_epoch = 0
+        best_logloss_fold = float('inf')
         if model_path and os.path.exists(model_path):
             checkpoint = torch.load(model_path, map_location=device)
             model.load_state_dict(checkpoint['model_state_dict'])
@@ -231,8 +234,6 @@ def train_main():
         else:
             print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
         
-
-        best_logloss_fold = float('inf')
         current_fold_best_model_path = None
         patience_counter = 0
         best_val_loss_for_early_stopping = float('inf')
