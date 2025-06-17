@@ -215,23 +215,29 @@ def train_main():
 
         model = CustomTimmModel(model_name=CFG['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
         model_path = CFG['START_FROM']
-        if model_path and os.path.exists(model_path):
-            model.load_state_dict(torch.load(model_path, map_location=device))
-            print(f"{model_path} 모델을 불러와 해당 체크포인트부터 학습을 재개합니다. CFG를 확인해주세요.")
-            print(f"Loaded model from {model_path}")
-        else:
-            print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
-        
         criterion = get_class_from_string(CFG['LOSS']['class'])(**CFG['LOSS']['params'])
         optimizer = get_class_from_string(CFG['OPTIMIZER']['class'])(model.parameters(), **CFG['OPTIMIZER']['params'])
         scheduler = get_class_from_string(CFG['SCHEDULER']['class'])(optimizer, **CFG['SCHEDULER']['params'])
+
+        if model_path and os.path.exists(model_path):
+            checkpoint = torch.load(model_path, map_location=device)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            best_logloss_fold = checkpoint.get('best_logloss', float('inf'))
+            print(f"{model_path} 모델을 불러와 해당 체크포인트부터 학습을 재개합니다. CFG를 확인해주세요.")
+            print(f"Loaded checkpoint, resuming from epoch {start_epoch}")
+        else:
+            print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
+        
 
         best_logloss_fold = float('inf')
         current_fold_best_model_path = None
         patience_counter = 0
         best_val_loss_for_early_stopping = float('inf')
 
-        for epoch in range(CFG['EPOCHS']):
+        for epoch in range(start_epoch, CFG['EPOCHS']):
             model.train()
             train_loss_epoch = 0.0
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
@@ -306,9 +312,18 @@ def train_main():
 
             if val_logloss_epoch < best_logloss_fold:
                 best_logloss_fold = val_logloss_epoch
-                current_fold_best_model_path = os.path.join(work_dir, f'best_model_{CFG["MODEL_NAME"]}_fold{fold_num}.pth')
-                torch.save(model.state_dict(), current_fold_best_model_path)
-                print(f"Fold {fold_num} 📦 Best model saved at epoch {epoch+1} (LogLoss: {best_logloss_fold:.4f}) to {current_fold_best_model_path}")
+                # 저장 경로 생성
+                ckpt_path = os.path.join(work_dir, f'checkpoint_fold{fold_num}.pth')
+                checkpoint = {
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'best_logloss': best_logloss_fold
+                }
+                torch.save(checkpoint, ckpt_path)
+                current_fold_best_model_path = ckpt_path
+                print(f"Fold {fold_num} 📦 Best model saved at epoch {epoch+1} (LogLoss: {best_logloss_fold:.4f})")
 
             if val_logloss_epoch < best_val_loss_for_early_stopping:
                 best_val_loss_for_early_stopping = val_logloss_epoch

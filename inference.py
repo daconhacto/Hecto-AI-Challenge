@@ -80,13 +80,14 @@ def inference_main():
         print("You might need to run train.py first or update the path to the desired .pth file.")
         return
         
-    try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"Loaded model from {model_path}")
-    except Exception as e:
-        print(f"Error loading model state_dict from {model_path}: {e}")
-        print("Ensure the model architecture in train.py (CustomTimmModel) matches the saved model.")
-        return
+    if model_path and os.path.exists(model_path):
+        checkpoint = torch.load(model_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        print(f"{model_path} 모델을 불러와 해당 체크포인트부터 학습을 재개합니다. CFG를 확인해주세요.")
+        print(f"Loaded checkpoint, resuming from epoch {start_epoch}")
+    else:
+        print("체크포인트 경로가 없거나 제공되지 않았으므로 pretrained model으로부터 모델을 훈련시킵니다.")
 
     model.eval()
     results = []
