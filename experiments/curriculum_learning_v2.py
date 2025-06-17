@@ -1,5 +1,6 @@
 import os
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import pprint
 import random
@@ -102,8 +103,66 @@ CFG = {
             'eta_min': 1e-6
         }
     },
+    
+    # curriculum 관련 세팅
+    # 만약 DO_CURRICULUM_LEARNING = True인 경우 train transform 관련 세팅은 무시되고 아래의 curriculum 기반으로 augmentation이 동작함
+    # 별개로 mixing하는 augmentation들 (MIXUP, CUTMIX, MOSAIC은 curriculum과 무관)
+    # params가 range로 주어지는 경우 에폭에 맞게 (min, max)범위에서 증가함. 단일값으로 주어지면 유지.
+    "DO_CURRICULUM_LEARNING": True,
+    "AUGMENTATION_LIBRARY": 'albumentations',
+    "CURRICULUM":[
+        {
+            'class': 'augmentations.CustomCropTransformConsiderRatio',
+            'params': {
+                'p':0.5
+            }
+        },
+        {
+            'class': 'albumentations.Resize',
+            'params': {} # 설정할 필요 없음
+        },
+        {
+            'class': 'albumentations.Rotate',
+            'params': {
+                'limit': {'s':5, 'e':15},
+                'p': 0.5
+            }
+        },
+        {
+            'class': 'albumentations.ColorJitter',
+            'params': {
+                'brightness': {'s':0.05, 'e':0.25},
+                'contrast': {'s':0.05, 'e':0.25},
+                'saturation': {'s':0.05, 'e':0.25},
+                'hue': 0.1,
+                'p': 0.5
+            }
+        },
+        {
+            'class': 'albumentations.Affine',
+            'params': {
+                'translate_percent': (0.1, 0.1),
+                'scale': {'s': (0.95, 1.05), 'e': (0.75, 1.25)},
+                'shear': {'s':5, 'e':10},
+                'rotate': 0,
+                'p': 0.5
+            }
+        },
+        {
+            'class': 'albumentations.Normalize',
+            'params': {
+                'mean': (0.485, 0.456, 0.406),
+                'std': (0.229, 0.224, 0.225)
+            }
+        },
+        {
+            'class': 'albumentations.pytorch.ToTensorV2',
+            'params': {}
+        }
+    ]
 }
 
+# 만약 curriculum learning이 활성화된 경우 train transform이 무시됨
 CFG['IMG_SIZE'] = CFG['IMG_SIZE'] if isinstance(CFG['IMG_SIZE'], tuple) else (CFG['IMG_SIZE'], CFG['IMG_SIZE'])
 # --- Albumentations 기반 이미지 변환 정의 ---
 train_transform = A.Compose([
@@ -123,53 +182,6 @@ val_transform = A.Compose([
     ToTensorV2()
 ])
 
-
-class AsymmetricLoss(nn.Module):
-    def __init__(self, gamma_neg=4, gamma_pos=1, clip=0.05, eps=1e-8, disable_torch_grad_focal_loss=True):
-        super(AsymmetricLoss, self).__init__()
- 
-        self.gamma_neg = gamma_neg
-        self.gamma_pos = gamma_pos
-        self.clip = clip
-        self.disable_torch_grad_focal_loss = disable_torch_grad_focal_loss
-        self.eps = eps
- 
-    def forward(self, x, y):
-        """"
-        Parameters
-        ----------
-        x: input logits
-        y: targets (multi-label binarized vector)
-        """
- 
-        # Calculating Probabilities
-        x_sigmoid = torch.sigmoid(x)
-        xs_pos = x_sigmoid
-        xs_neg = 1 - x_sigmoid
- 
-        # Asymmetric Clipping
-        if self.clip is not None and self.clip > 0:
-            xs_neg = (xs_neg + self.clip).clamp(max=1)
- 
-        # Basic CE calculation
-        los_pos = y * torch.log(xs_pos.clamp(min=self.eps))
-        los_neg = (1 - y) * torch.log(xs_neg.clamp(min=self.eps))
-        loss = los_pos + los_neg
- 
-        # Asymmetric Focusing
-        if self.gamma_neg > 0 or self.gamma_pos > 0:
-            if self.disable_torch_grad_focal_loss:
-                torch.set_grad_enabled(False)
-            pt0 = xs_pos * y
-            pt1 = xs_neg * (1 - y)  # pt = p if t > 0 else 1-p
-            pt = pt0 + pt1
-            one_sided_gamma = self.gamma_pos * y + self.gamma_neg * (1 - y)
-            one_sided_w = torch.pow(1 - pt, one_sided_gamma)
-            if self.disable_torch_grad_focal_loss:
-                torch.set_grad_enabled(True)
-            loss *= one_sided_w
- 
-        return -loss.sum()
 
 def train_main():
     # work directory 생성
@@ -243,6 +255,8 @@ def train_main():
         train_samples_fold = [all_samples[i] for i in train_indices]
         val_samples_fold = [all_samples[i] for i in val_indices]
         train_dataset_fold = FoldSpecificDataset(train_samples_fold, image_size = CFG['IMG_SIZE'], transform=train_transform)
+        if CFG['DO_CURRICULUM_LEARNING']:
+            train_dataset_fold = CurriculumDatasetWrapper(train_dataset_fold, cfg=CFG)
         val_dataset_fold = FoldSpecificDataset(val_samples_fold, image_size = CFG['IMG_SIZE'], transform=val_transform, is_train=False)
 
         # group_path가 설정되어 있으면 해당 class들로만 훈련을 진행
@@ -279,6 +293,9 @@ def train_main():
         best_val_loss_for_early_stopping = float('inf')
 
         for epoch in range(CFG['EPOCHS']):
+            if CFG['DO_CURRICULUM_LEARNING']:
+                train_loader.dataset.update_transform(epoch)
+            
             model.train()
             train_loss_epoch = 0.0
             # tqdm 생략 가능 (스크립트 실행 시) 또는 유지
