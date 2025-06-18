@@ -28,11 +28,11 @@ CFG = {
             "ensemble_log_loss": 0.09121,
             "models": [
                 # ConvNext 5개 Fold에 대한 정보를 입력하세요.
-                {"path": "/path/to/your/conv_fold1.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.09476},
-                {"path": "/path/to/your/conv_fold2.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10195},
-                {"path": "/path/to/your/conv_fold3.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10860},
-                {"path": "/path/to/your/conv_fold4.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10146},
-                {"path": "/path/to/your/conv_fold5.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10181},
+                {"path": "./pth_files/conv_fold1.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.09476},
+                {"path": "./pth_files/conv_fold2.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10195},
+                {"path": "./pth_files/conv_fold3.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10860},
+                {"path": "./pth_files/conv_fold4.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10146},
+                {"path": "./pth_files/conv_fold5.pth", "name": "convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384", "img_size": 600, "val_log_loss": 0.10181},
             ]
         },
         {
@@ -42,9 +42,9 @@ CFG = {
             "ensemble_log_loss": 0.10367,
             "models": [
                 # EVA 3개 Fold에 대한 정보를 입력하세요. (가중치: 0.13874, 0.112754, 0.1089)
-                {"path": "/path/to/your/eva_fold1.pth", "name": "eva02_large_patch14_448.mim_m38m_ft_in1k", "img_size": 448, "val_log_loss": 0.13874},
-                {"path": "/path/to/your/eva_fold2.pth", "name": "eva02_large_patch14_448.mim_m38m_ft_in1k", "img_size": 448, "val_log_loss": 0.12754},
-                {"path": "/path/to/your/eva_fold3.pth", "name": "eva02_large_patch14_448.mim_m38m_ft_in1k", "img_size": 448, "val_log_loss": 0.11089},
+                {"path": "./pth_files/eva_fold1.pth", "name": "eva02_large_patch14_448.mim_m38m_ft_in1k", "img_size": 448, "val_log_loss": 0.13874},
+                {"path": "./pth_files/eva_fold2.pth", "name": "eva02_large_patch14_448.mim_m38m_ft_in1k", "img_size": 448, "val_log_loss": 0.12754},
+                {"path": "./pth_files/eva_fold3.pth", "name": "eva02_large_patch14_448.mim_m38m_ft_in1k", "img_size": 448, "val_log_loss": 0.11089},
             ]
         }
     ],
