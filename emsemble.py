@@ -16,8 +16,8 @@ CFG = {
     'BATCH_SIZE': 16,
     'SEED': 42,
     'CLASS_NAMES_PATH': './class_names.json',  # train.py 실행 후 생성된 class_names.json 경로
-    'TEST_ROOT': '../test',                    # 테스트 이미지 폴더 경로
-    'SAMPLE_SUBMISSION_PATH': '../sample_submission.csv', # 샘플 제출 파일 경로
+    'TEST_ROOT': './data/test',                    # 테스트 이미지 폴더 경로
+    'SAMPLE_SUBMISSION_PATH': './data/sample_submission.csv', # 샘플 제출 파일 경로
 
     # --- 1단계 추론 및 앙상블 설정 ---
     'STAGE1_GROUPS': [
