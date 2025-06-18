@@ -8,3 +8,9 @@ streamlit
 albumentations
 pytorch-metric-learning
 opencv-contrib-python
+numpy
+json
+torch
+tqdm
+torchvision
+PIL
