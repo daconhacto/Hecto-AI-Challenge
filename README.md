@@ -5,9 +5,13 @@
 
 이에 따라, ‘HAI(하이)! - Hecto AI Challenge : 2025 상반기 헥토 채용 AI 경진대회’는 실제 중고차 차량 이미지를 기반으로 한 차종 분류 AI 모델 개발을 주제로 개최됩니다.
 
-# installation
-- Driver Version: 535.183.01   CUDA Version: 12.2
+# environment
+- OS : Ubuntu 22.04.5 LTS
+- CUDA Driver Version: 535.183.01
+- CUDA Version: 12.2
 - python 3.10.16
+
+# installation
 ```
 conda create -n hecto python=3.10.16
 conda activate hecto
