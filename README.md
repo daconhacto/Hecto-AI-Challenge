@@ -19,7 +19,8 @@ pip install -r requirements.txt
 ```
 # 추론 파일 재현을 위한 code 실행
 1. ./data 폴더에 test, sample_submission csv 파일 위치
-2. 가중치 파일 다운로드(구글드라이브 파일 링크 업로드 예정) 후 압축해제, ./pth_files 폴더에 가중치가 정상적으로 위치하였는지 확인
+2. 가중치 파일 다운로드(구글드라이브 파일 링크 업로드 예정) 후 압축해제, 
+   ./pth_files 폴더에 가중치가 정상적으로 위치하였는지 확인
 ```
 ./pth_files
 - conv_fold1.pth
