@@ -22,16 +22,32 @@ pip install -r requirements.txt
 
 
 # How To Use
+1. ../data 폴더에 train 학습파일 위치
+2. /data_control/data_remove_v2.py 실행
+3. /data_control/img_move_v1.py 실행
+
 - train.py
+
+4. convnext 모델 학습실행 
 ```
 python train.py \
   --ROOT ../data/train \
   --WORK_DIR ../work_dir \
   --MODEL_NAME convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384 \
   --N_FOLDS 5 \
+  --IMG_SIZE 600
+```
+5. eva 모델 학습실행 
+```
+python train.py \
+  --ROOT ../data/train \
+  --WORK_DIR ../work_dir \
+  --MODEL_NAME eva02_large_patch14_448.mim_in22k_ft_in1k \
+  --N_FOLDS 5 \
+  --IMG_SIZE 448
 ```
 
-
+6. work_dir에 생긴 파일을 가지고 추론을 진행합니다.
 - inference.py
 ```
 python inference.py \
@@ -41,10 +57,3 @@ python inference.py \
   --MODEL_PATH ../work_dir/best_model.pth \
   --BATCH_SIZE 64
 ```
-| Argument            | Type  | Default                    | Description                                                                          |
-| ------------------- | ----- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `--ROOT`            | `str` | `'../data/test'`           | Path to test data root                                                               |
-| `--SUBMISSION_FILE` | `str` | `'../data/submission.csv'` | Path to the base submission file (CSV)                                               |
-| `--WORK_DIR`        | `str` | `'../work_dir'`            | Directory containing model checkpoints and outputs                                   |
-| `--MODEL_PATH`      | `str` | `''`                       | Path to trained `.pth` model (if empty, a random checkpoint from `WORK_DIR` will be used) |
-| `--BATCH_SIZE`      | `int` | `64`                       | Batch size for inference                                                             |
