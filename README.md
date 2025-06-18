@@ -66,8 +66,8 @@ python train.py \
 ```
 python inference.py \
   --ROOT ./data/test \
-  --SUBMISSION_FILE ../data/submission.csv \
-  --WORK_DIR ../work_dir \
-  --MODEL_PATH ../work_dir/best_model.pth \
+  --SUBMISSION_FILE ./data/submission.csv \
+  --WORK_DIR ./work_dir \
+  --MODEL_PATH ./work_dir/best_model.pth \
   --BATCH_SIZE 64
 ```
