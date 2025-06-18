@@ -121,8 +121,8 @@ val_transform = A.Compose([
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Training Configuration")
 
-    parser.add_argument('--ROOT', type=str, default='../data/train', help='Path to training data root')
-    parser.add_argument('--WORK_DIR', type=str, default='../work_dir', help='Directory to save outputs and checkpoints')
+    parser.add_argument('--ROOT', type=str, default='./data/train', help='Path to training data root')
+    parser.add_argument('--WORK_DIR', type=str, default='./work_dir', help='Directory to save outputs and checkpoints')
     parser.add_argument('--MODEL_NAME', type=str, default='convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384', help='Model name or path')
     parser.add_argument('--N_FOLDS', type=int, default=5, help='Number of cross-validation folds')
     parser.add_argument('--IMG_SIZE', type=str, default=600, help='img_size')

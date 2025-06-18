@@ -26,8 +26,8 @@ def parse_arguments():
     cfg = {}
     parser = argparse.ArgumentParser(description="Training Configuration")
 
-    parser.add_argument('--ROOT', type=str, default='../data/test', help='Path to training data root')
-    parser.add_argument('--WORK_DIR', type=str, default='../work_dir', help='Directory to save outputs and checkpoints')
+    parser.add_argument('--ROOT', type=str, default='./data/test', help='Path to training data root')
+    parser.add_argument('--WORK_DIR', type=str, default='./work_dir', help='Directory to save outputs and checkpoints')
     parser.add_argument('--MODEL_PATH', type=str, default='', help='path to trained model(if empty model path is ramdom .pth checkpoint in work_dir)')
     parser.add_argument('--BATCH_SIZE', type=int, default=64, help='batch_size for inference')
     args = parser.parse_args()
