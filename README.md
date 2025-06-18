@@ -29,15 +29,7 @@ python train.py \
   --WORK_DIR ../work_dir \
   --MODEL_NAME convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384 \
   --N_FOLDS 5 \
-  --TARGET_FOLD 1
 ```
-| Argument        | Type  | Default                                                | Description                               |
-| --------------- | ----- | ------------------------------------------------------ | ----------------------------------------- |
-| `--ROOT`        | `str` | `'../data/train'`                                      | Path to train data root                   |
-| `--WORK_DIR`    | `str` | `'../work_dir'`                                        | Directory to save outputs and checkpoints |
-| `--MODEL_NAME`  | `str` | `'convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384'` | timm Model name                           |
-| `--N_FOLDS`     | `int` | `5`                                                    | Number of cross-validation folds          |
-| `--TARGET_FOLD` | `int` | `1`                                                    | Target fold to train or                   |
 
 
 - inference.py
