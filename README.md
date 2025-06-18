@@ -18,7 +18,10 @@ conda activate hecto
 pip install -r requirements.txt
 ```
 # 추론 파일 재현을 위한 code 실행
-
+1. ./data 폴더에 test, sample_submission csv 파일 위치
+2. ./pth_files 폴더에 가중치 파일 다운로드
+3. emsemble.py 실행.
+4. submission.csv 파일 생성
 
 
 # How To Use
