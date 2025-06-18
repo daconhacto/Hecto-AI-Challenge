@@ -32,7 +32,7 @@ pip install -r requirements.txt
 - eva_fold3.pth  
 ```
 3. emsemble.py 실행
-4. submission.csv 파일 생성
+4. submission/final_submission.csv으로 최종 submission.csv 파일 생성
 
 
 # How To Use
