@@ -22,7 +22,7 @@ pip install -r requirements.txt
 
 
 # How To Use
-1. ../data 폴더에 train 학습파일 위치
+1. ./data 폴더에 train 학습파일 위치
 2. /data_control/data_remove_v2.py 실행
 3. /data_control/img_move_v1.py 실행
 
@@ -31,8 +31,8 @@ pip install -r requirements.txt
 4. convnext 모델 학습실행 
 ```
 python train.py \
-  --ROOT ../data/train \
-  --WORK_DIR ../work_dir \
+  --ROOT ./data/train \
+  --WORK_DIR ./work_dir \
   --MODEL_NAME convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384 \
   --N_FOLDS 5 \
   --IMG_SIZE 600
@@ -40,8 +40,8 @@ python train.py \
 5. eva 모델 학습실행 
 ```
 python train.py \
-  --ROOT ../data/train \
-  --WORK_DIR ../work_dir \
+  --ROOT ./data/train \
+  --WORK_DIR ./work_dir \
   --MODEL_NAME eva02_large_patch14_448.mim_in22k_ft_in1k \
   --N_FOLDS 5 \
   --IMG_SIZE 448
@@ -51,7 +51,7 @@ python train.py \
 - inference.py
 ```
 python inference.py \
-  --ROOT ../data/test \
+  --ROOT ./data/test \
   --SUBMISSION_FILE ../data/submission.csv \
   --WORK_DIR ../work_dir \
   --MODEL_PATH ../work_dir/best_model.pth \
