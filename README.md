@@ -17,6 +17,9 @@ conda create -n hecto python=3.10.16
 conda activate hecto
 pip install -r requirements.txt
 ```
+# 추론 파일 재현을 위한 code 실행
+
+
 
 # How To Use
 - train.py
