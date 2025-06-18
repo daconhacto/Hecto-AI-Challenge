@@ -50,7 +50,7 @@ CFG = {
     ],
 
     # --- 2단계 CSV 앙상블 설정 ---
-    'STAGE2_OUTPUT_NAME': 'final_submission.csv',
+    'STAGE2_OUTPUT_NAME': 'submission/final_submission.csv',
 }
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
