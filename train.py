@@ -125,6 +125,7 @@ def parse_arguments():
     parser.add_argument('--WORK_DIR', type=str, default='../work_dir', help='Directory to save outputs and checkpoints')
     parser.add_argument('--MODEL_NAME', type=str, default='convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384', help='Model name or path')
     parser.add_argument('--N_FOLDS', type=int, default=5, help='Number of cross-validation folds')
+    parser.add_argument('--IMG_SIZE', type=str, default=600, help='img_size')
     # parser.add_argument('--TARGET_FOLD', type=int, default=1, help='Target fold to train or validate')
     args = parser.parse_args()
 
@@ -132,6 +133,7 @@ def parse_arguments():
     CFG['WORK_DIR'] = args.WORK_DIR
     CFG['MODEL_NAME'] = args.MODEL_NAME
     CFG['N_FOLDS'] = args.N_FOLDS
+    CFG['IMG_SIZE'] = args.IMG_SIZE
     # CFG['TARGET_FOLD'] = args.TARGET_FOLD
 
 
