@@ -19,7 +19,18 @@ pip install -r requirements.txt
 ```
 # 추론 파일 재현을 위한 code 실행
 1. ./data 폴더에 test, sample_submission csv 파일 위치
-2. ./pth_files 폴더에 가중치 파일 다운로드
+2. 가중치 파일 다운로드 후 압축해제, ./pth_files 폴더에 가중치가 정상적으로 위치하였는지 확인
+```
+./pth_files
+- conv_fold1.pth
+- conv_fold2.pth
+- conv_fold3.pth
+- conv_fold4.pth
+- conv_fold5.pth
+- eva_fold1.pth
+- eva_fold2.pth
+- eva_fold3.pth  
+```
 3. emsemble.py 실행
 4. submission.csv 파일 생성
 
