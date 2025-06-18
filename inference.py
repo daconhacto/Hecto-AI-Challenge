@@ -1,4 +1,5 @@
 import os
+import argparse
 import pandas as pd
 import numpy as np
 from PIL import Image
@@ -17,16 +18,28 @@ from model import *
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Inference Configuration
-CFG_INF = {
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/convnext_cutmix+mixup_test', # train.py로 생성된 work_directory
-    'MODEL_PATH': '/project/ahnailab/jys0207/CP/tjrgus5/hecto/work_directories/convnext_mosaic_test_lr1e-5_retrain/best_model_convnext_base.fb_in22k_ft_in1k_384_fold1.pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
-    'ROOT': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/test',
-    'SUBMISSION_FILE': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto/sample_submission.csv',
-    'BATCH_SIZE': 64, # 추론 시 배치 크기
-}
+
+def parse_arguments():
+    cfg = {}
+    parser = argparse.ArgumentParser(description="Training Configuration")
+
+    parser.add_argument('--ROOT', type=str, default='../data/test', help='Path to training data root')
+    parser.add_argument('--SUBMISSION_FILE', type=str, default='../data/submission.csv', help='Path to submission.csv')
+    parser.add_argument('--WORK_DIR', type=str, default='../work_dir', help='Directory to save outputs and checkpoints')
+    parser.add_argument('--MODEL_PATH', type=str, default='', help='path to trained model(if empty model path is ramdom .pth checkpoint in work_dir)')
+    parser.add_argument('--BATCH_SIZE', type=int, default=64, help='batch_size for inference')
+    args = parser.parse_args()
+
+    cfg['ROOT'] = args.ROOT
+    cfg['WORK_DIR'] = args.WORK_DIR
+    cfg['MODEL_PATH'] = args.MODEL_PATH
+    cfg['SUBMISSION_FILE'] = args.SUBMISSION_FILE
+    cfg['BATCH_SIZE'] = args.BATCH_SIZE
+    return cfg
 
 def inference_main():
+    CFG_INF = parse_arguments()
+
     # TRAIN_CFG를 통한 CFG_INF 업데이트
     work_dir = CFG_INF['WORK_DIR']
     with open(os.path.join(work_dir, "settings.json"), "r") as f:

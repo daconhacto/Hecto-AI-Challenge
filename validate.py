@@ -1,4 +1,5 @@
 import os
+import argparse
 from collections import defaultdict
 import pandas as pd
 import numpy as np
@@ -21,14 +22,24 @@ from model import *
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
-CFG = {
-    "WORK_DIR": '/home/sh/hecto/tjrgus5/work_dir/convnext1214_half_image_retraining', # train.py로 생성된 work_directory
-    'MODEL_PATH': '/home/sh/hecto/tjrgus5/work_dir/convnext1214_half_image_retraining/best_model_convnext_base.fb_in22k_ft_in1k_384_fold1.pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
-    "ROOT": '/home/sh/hecto/train', # data_path
-    "BATCH_SIZE": 64
-}
+def parse_arguments():
+    cfg = {}
+    parser = argparse.ArgumentParser(description="Training Configuration")
+
+    parser.add_argument('--ROOT', type=str, default='../data/test', help='Path to training data root')
+    parser.add_argument('--WORK_DIR', type=str, default='../work_dir', help='Directory to save outputs and checkpoints')
+    parser.add_argument('--MODEL_PATH', type=str, default='', help='path to trained model(if empty model path is ramdom .pth checkpoint in work_dir)')
+    parser.add_argument('--BATCH_SIZE', type=int, default=64, help='batch_size for inference')
+    args = parser.parse_args()
+
+    cfg['ROOT'] = args.ROOT
+    cfg['WORK_DIR'] = args.WORK_DIR
+    cfg['MODEL_PATH'] = args.MODEL_PATH
+    cfg['BATCH_SIZE'] = args.BATCH_SIZE
+    return cfg
 
 def validate_for_all_train_data():
+    CFG = parse_arguments()
     print("Using device:", device)
     
     # work_directory

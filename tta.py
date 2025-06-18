@@ -1,4 +1,5 @@
 import os
+import argparse
 import pandas as pd
 import numpy as np
 from PIL import Image
@@ -17,18 +18,31 @@ from augmentations import *
 # Device Setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Inference Configuration
-CFG_INF = {
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/final_code_latest_version/work_dir/convnext_large_1084_5fold_training', # train.py로 생성된 work_directory
-    'MODEL_PATH': '/project/ahnailab/jys0207/CP/tjrgus5/final_code_latest_version/work_dir/convnext_large_1084_5fold_training/best_model_convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384_fold1.pth', # 학습 후 생성된 실제 모델 경로로 수정 필요
-    'ROOT': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto_dataset_test/test',
-    'SUBMISSION_FILE': '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto_dataset_test/sample_submission.csv',
-    'BATCH_SIZE': 64, # 추론 시 배치 크기
-    'TTA_TIMES': 2, # tta 수행 횟수
-}
+
+def parse_arguments():
+    cfg = {}
+    parser = argparse.ArgumentParser(description="Training Configuration")
+
+    parser.add_argument('--ROOT', type=str, default='../data/test', help='Path to training data root')
+    parser.add_argument('--SUBMISSION_FILE', type=str, default='../data/submission.csv', help='Path to submission.csv')
+    parser.add_argument('--WORK_DIR', type=str, default='../work_dir', help='Directory to save outputs and checkpoints')
+    parser.add_argument('--MODEL_PATH', type=str, default='', help='path to trained model(if empty model path is ramdom .pth checkpoint in work_dir)')
+    parser.add_argument('--BATCH_SIZE', type=int, default=64, help='batch_size for inference')
+    parser.add_argument('--TTA_TIMES', type=int, default=2, help='Number of TTA iterations')
+    args = parser.parse_args()
+
+    cfg['ROOT'] = args.ROOT
+    cfg['WORK_DIR'] = args.WORK_DIR
+    cfg['MODEL_PATH'] = args.MODEL_PATH
+    cfg['SUBMISSION_FILE'] = args.SUBMISSION_FILE
+    cfg['BATCH_SIZE'] = args.BATCH_SIZE
+    cfg['TTA_TIMES'] = args.TTA_TIMES
+    return cfg
 
 
 def inference_main():
+    CFG_INF = parse_arguments()
+
     # TRAIN_CFG를 통한 CFG_INF 업데이트
     work_dir = CFG_INF['WORK_DIR']
     with open(os.path.join(work_dir, "settings.json"), "r") as f:
@@ -77,7 +91,7 @@ def inference_main():
     # 모델 로드
     model = CustomTimmModel(model_name=CFG_INF['MODEL_NAME'], num_classes_to_predict=num_classes).to(device)
     
-    model_path = CFG_INF['MODEL_PATH']
+    model_path = CFG_INF['MODEL_PATH'] if CFG_INF['MODEL_PATH'] else find_first_file_by_extension(work_dir)
     if not os.path.exists(model_path):
         print(f"Error: Model file {model_path} not found. Please check the path in CFG_INF['MODEL_PATH'].")
         print("You might need to run train.py first or update the path to the desired .pth file.")

@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import pprint
+import argparse
 import random
 import pandas as pd
 import numpy as np
@@ -30,9 +31,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameter Setting
 CFG = {
-    "ROOT": '/project/ahnailab/jys0207/CP/lexxsh_project_3/hecto_dataset_test/train_original',
-    "WORK_DIR": '/project/ahnailab/jys0207/CP/tjrgus5/june_code_latest_version/work_dir/convnext_1084_5fold_training',
-
     # retraining 설정
     "START_FROM": None, # 만약 None이 아닌 .pth파일 경로 입력하면 해당 checkpoint를 load해서 시작
     "GROUP_PATH": None, # 만약 None이 아닌 group.json의 경로르 입력하면 해당 class들만 활용하여 train을 진행함
@@ -76,11 +74,8 @@ CFG = {
     'BATCH_SIZE': 32, # 학습 시 배치 크기
     'EPOCHS': 35,
     'SEED' : 42,
-    'MODEL_NAME': 'convnext_base.fb_in22k_ft_in1k_384', # 사용할 모델 이름
-    'N_FOLDS': 5,
     'EARLY_STOPPING_PATIENCE': 3,
-    'RUN_SINGLE_FOLD': False,  # True로 설정 시 특정 폴드만 실행
-    'TARGET_FOLD': 1,          # RUN_SINGLE_FOLD가 True일 때 실행할 폴드 번호 (1-based)
+    'RUN_SINGLE_FOLD': True,  # True로 설정 시 특정 폴드만 실행
     
 
     # 새롭게 추가된 logging파트. class의 경우 무조건 풀경로로 적어야합니다. nn.CrossEntropyLoss 처럼 적으면 오류남
@@ -91,7 +86,7 @@ CFG = {
     'OPTIMIZER': {
         'class': 'torch.optim.AdamW',
         'params': {
-            'lr': 1e-4,
+            'lr': 2e-5,
             'weight_decay': 1e-2
         }
     },
@@ -99,7 +94,7 @@ CFG = {
         'class': 'torch.optim.lr_scheduler.CosineAnnealingLR',
         'params': {
             'T_max': 35,
-            'eta_min': 1e-6
+            'eta_min': 2e-8
         }
     },
 }
@@ -123,8 +118,26 @@ val_transform = A.Compose([
     ToTensorV2()
 ])
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Training Configuration")
+
+    parser.add_argument('--ROOT', type=str, default='../data/train', help='Path to training data root')
+    parser.add_argument('--WORK_DIR', type=str, default='../work_dir', help='Directory to save outputs and checkpoints')
+    parser.add_argument('--MODEL_NAME', type=str, default='convnext_large_mlp.clip_laion2b_augreg_ft_in1k_384', help='Model name or path')
+    parser.add_argument('--N_FOLDS', type=int, default=5, help='Number of cross-validation folds')
+    parser.add_argument('--TARGET_FOLD', type=int, default=1, help='Target fold to train or validate')
+    args = parser.parse_args()
+
+    CFG['ROOT'] = args.ROOT
+    CFG['WORK_DIR'] = args.WORK_DIR
+    CFG['MODEL_NAME'] = args.MODEL_NAME
+    CFG['N_FOLDS'] = args.N_FOLDS
+    CFG['TARGET_FOLD'] = args.TARGET_FOLD
+
 
 def train_main():
+    parse_arguments()
+
     # work directory 생성
     work_dir = CFG['WORK_DIR']
     os.makedirs(work_dir, exist_ok=True)
